@@ -2,7 +2,7 @@
 
 ## Wave 0：Bootstrap
 
-状态：`IN_PROGRESS`
+状态：`COMPLETE`
 
 - 冻结产品范围。
 - 冻结核心架构原则。
@@ -12,6 +12,8 @@
 完成标准：Bootstrap Draft PR 通过审查并合并。
 
 ## Wave 1：Runtime Contracts
+
+状态：`IN_PROGRESS`
 
 - 建立模块骨架。
 - 定义 TaskFrame、Route、Plan、Revision、Step、Checkpoint。
