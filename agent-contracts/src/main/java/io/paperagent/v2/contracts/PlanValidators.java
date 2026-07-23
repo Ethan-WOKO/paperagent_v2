@@ -2,6 +2,7 @@ package io.paperagent.v2.contracts;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -67,20 +68,43 @@ public final class PlanValidators {
                     "planRevision", "both previous and current revisions are required"));
             return List.copyOf(violations);
         }
+        Map<PlanStepId, PlanStep> previousSteps = indexSteps(previous.steps());
         Map<PlanStepId, PlanStep> currentSteps = indexSteps(current.steps());
-        for (Map.Entry<PlanStepId, CompletionFact> entry : previous.completedFacts().entrySet()) {
-            PlanStepId stepId = entry.getKey();
+        List<PlanStepId> factIds = new ArrayList<>(previous.completedFacts().keySet());
+        for (PlanStepId stepId : current.completedFacts().keySet()) {
+            if (!previous.completedFacts().containsKey(stepId)) {
+                factIds.add(stepId);
+            }
+        }
+        factIds.sort(Comparator.comparing(PlanStepId::value));
+
+        for (PlanStepId stepId : factIds) {
+            String path = "planRevision.completedFacts." + stepId.value();
+            CompletionFact previousFact = previous.completedFacts().get(stepId);
+            if (previousFact == null) {
+                PlanStep previousStep = previousSteps.get(stepId);
+                if (previousStep == null) {
+                    violations.add(Contracts.violation(ViolationCode.INCONSISTENT_REFERENCE,
+                            path,
+                            "new completion fact must reference a step from the previous revision"));
+                } else if (!previousStep.equals(currentSteps.get(stepId))) {
+                    violations.add(Contracts.violation(ViolationCode.COMPLETED_FACT_REDEFINED,
+                            path,
+                            "a newly completed step must preserve its previous definition"));
+                }
+                continue;
+            }
+
             if (!currentSteps.containsKey(stepId) || !current.completedFacts().containsKey(stepId)) {
                 violations.add(Contracts.violation(ViolationCode.COMPLETED_FACT_REMOVED,
-                        "planRevision.completedFacts." + stepId.value(),
+                        path,
                         "a completed authoritative fact and its step must be preserved"));
                 continue;
             }
-            PlanStep previousStep = indexSteps(previous.steps()).get(stepId);
-            if (!previousStep.equals(currentSteps.get(stepId))
-                    || !entry.getValue().equals(current.completedFacts().get(stepId))) {
+            if (!previousSteps.get(stepId).equals(currentSteps.get(stepId))
+                    || !previousFact.equals(current.completedFacts().get(stepId))) {
                 violations.add(Contracts.violation(ViolationCode.COMPLETED_FACT_REDEFINED,
-                        "planRevision.completedFacts." + stepId.value(),
+                        path,
                         "completed work cannot be redefined or contradicted"));
             }
         }
