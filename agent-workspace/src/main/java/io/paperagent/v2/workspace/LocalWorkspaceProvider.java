@@ -46,17 +46,40 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
     private final ProjectVersionSource source;
     private final WorkspaceFileMover mover;
     private final WorkspaceMaterializationWriter materializationWriter;
+    private final WorkspaceBackupReader backupReader;
     private final Map<WorkspaceId, WorkspaceState> workspaces = new HashMap<>();
 
     public LocalWorkspaceProvider(Path providerRoot, ProjectVersionSource source) {
-        this(providerRoot, source, LocalWorkspaceProvider::defaultMove, Files::write);
+        this(
+                providerRoot,
+                source,
+                LocalWorkspaceProvider::defaultMove,
+                Files::write,
+                LocalWorkspaceProvider::readBoundedNoFollow);
     }
 
     LocalWorkspaceProvider(
             Path providerRoot,
             ProjectVersionSource source,
             WorkspaceFileMover mover) {
-        this(providerRoot, source, mover, Files::write);
+        this(
+                providerRoot,
+                source,
+                mover,
+                Files::write,
+                LocalWorkspaceProvider::readBoundedNoFollow);
+    }
+
+    LocalWorkspaceProvider(
+            Path providerRoot,
+            ProjectVersionSource source,
+            WorkspaceBackupReader backupReader) {
+        this(
+                providerRoot,
+                source,
+                LocalWorkspaceProvider::defaultMove,
+                Files::write,
+                backupReader);
     }
 
     LocalWorkspaceProvider(
@@ -64,11 +87,26 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
             ProjectVersionSource source,
             WorkspaceFileMover mover,
             WorkspaceMaterializationWriter materializationWriter) {
+        this(
+                providerRoot,
+                source,
+                mover,
+                materializationWriter,
+                LocalWorkspaceProvider::readBoundedNoFollow);
+    }
+
+    private LocalWorkspaceProvider(
+            Path providerRoot,
+            ProjectVersionSource source,
+            WorkspaceFileMover mover,
+            WorkspaceMaterializationWriter materializationWriter,
+            WorkspaceBackupReader backupReader) {
         WorkspaceValues.require(providerRoot, "configureWorkspace");
         this.source = WorkspaceValues.require(source, "configureWorkspace");
         this.mover = WorkspaceValues.require(mover, "configureWorkspace");
         this.materializationWriter =
                 WorkspaceValues.require(materializationWriter, "configureWorkspace");
+        this.backupReader = WorkspaceValues.require(backupReader, "configureWorkspace");
         if (!providerRoot.isAbsolute()) {
             throw failure(WorkspaceErrorCode.PATH_ESCAPE, "configureWorkspace", null);
         }
@@ -182,7 +220,7 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         try {
             long size = Files.size(target);
             requireReadableSize(state, path, size, "read");
-            return readBounded(target, state.limits().maxFileBytes(), "read", path);
+            return readBoundedNoFollow(target, state.limits().maxFileBytes(), "read", path);
         } catch (WorkspaceException exception) {
             throw exception;
         } catch (IOException exception) {
@@ -302,7 +340,7 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         if (exists) {
             requireRegularFile(target, operation, path);
         }
-        long previousSize = exists ? fileSize(target, operation, path) : 0;
+        long previousSize = exists ? fileSizeNoFollow(target, operation, path) : 0;
         ensureAdditionalFileAllowed(state, content.length - previousSize, !exists, path, operation);
         createParents(state, path, operation);
 
@@ -312,14 +350,17 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
             ensureStagingAvailable(temporary, operation, path);
             ensureStagingAvailable(backup, operation, path);
             Files.write(temporary, content, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+            requireRegularStagingFile(state, temporary, operation, path);
             if (exists) {
-                Files.copy(target, backup, StandardCopyOption.COPY_ATTRIBUTES);
+                acquirePriorFile(state, path, target, backup, operation);
             }
             try {
+                requireTargetParentWithoutLinks(state, path, target, operation);
+                requireRegularStagingFile(state, temporary, operation, path);
                 mover.move(temporary, target, exists);
             } catch (IOException moveFailure) {
                 if (exists) {
-                    restorePriorFile(target, backup);
+                    restorePriorFile(state, path, target, backup, operation);
                 }
                 throw moveFailure;
             }
@@ -530,15 +571,84 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         }
     }
 
-    private static void restorePriorFile(Path target, Path backup) {
+    private void acquirePriorFile(
+            WorkspaceState state,
+            ProjectPath path,
+            Path target,
+            Path backup,
+            String operation) throws IOException {
+        requireTargetParentWithoutLinks(state, path, target, operation);
+        requireRegularFile(target, operation, path);
+        byte[] priorContent =
+                backupReader.read(target, state.limits().maxFileBytes(), operation, path);
+        if (priorContent.length > state.limits().maxFileBytes()) {
+            throw failure(WorkspaceErrorCode.FILE_LIMIT_EXCEEDED, operation, path);
+        }
+        requireDirectoryWithoutLinks(state.stagingRoot(), operation, path);
+        ensureStagingAvailable(backup, operation, path);
+        Files.write(
+                backup,
+                priorContent,
+                StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE);
+        requireRegularStagingFile(state, backup, operation, path);
+    }
+
+    private void restorePriorFile(
+            WorkspaceState state,
+            ProjectPath path,
+            Path target,
+            Path backup,
+            String operation) {
         if (!Files.exists(backup, NOFOLLOW_LINKS)) {
             return;
         }
         try {
-            Files.copy(backup, target, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException ignored) {
+            requireTargetParentWithoutLinks(state, path, target, operation);
+            requireRegularStagingFile(state, backup, operation, path);
+            /*
+             * Moving with REPLACE_EXISTING replaces a final symbolic-link entry
+             * instead of opening its referent. Parent components are rechecked
+             * immediately above; a hostile cross-process swap after that check
+             * remains a filesystem boundary this JDK-only provider cannot close.
+             */
+            defaultMove(backup, target, true);
+            requireRegularFile(target, operation, path);
+        } catch (WorkspaceException | IOException ignored) {
             // The public failure remains stable and does not expose a host path.
         }
+    }
+
+    private void requireTargetParentWithoutLinks(
+            WorkspaceState state,
+            ProjectPath path,
+            Path target,
+            String operation) {
+        requireManagedState(state, operation);
+        Path parent = state.dataRoot();
+        String[] segments = path.value().split("/");
+        for (int index = 0; index < segments.length - 1; index++) {
+            parent = parent.resolve(segments[index]);
+            requireNotLink(parent, operation, path);
+            if (!Files.isDirectory(parent, NOFOLLOW_LINKS)) {
+                throw failure(WorkspaceErrorCode.PATH_COLLISION, operation, path);
+            }
+        }
+        if (!target.getParent().equals(parent)) {
+            throw failure(WorkspaceErrorCode.PATH_ESCAPE, operation, path);
+        }
+    }
+
+    private static void requireRegularStagingFile(
+            WorkspaceState state,
+            Path path,
+            String operation,
+            ProjectPath projectPath) {
+        requireDirectoryWithoutLinks(state.stagingRoot(), operation, projectPath);
+        if (!path.getParent().equals(state.stagingRoot())) {
+            throw failure(WorkspaceErrorCode.PATH_ESCAPE, operation, projectPath);
+        }
+        requireRegularFile(path, operation, projectPath);
     }
 
     private static void removeEmptyParents(WorkspaceState state, Path start) {
@@ -569,9 +679,22 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         }
     }
 
-    private static long fileSize(Path path, String operation, ProjectPath projectPath) {
+    private static long fileSizeNoFollow(
+            Path path,
+            String operation,
+            ProjectPath projectPath) {
         try {
-            return Files.size(path);
+            BasicFileAttributes attributes =
+                    Files.readAttributes(path, BasicFileAttributes.class, NOFOLLOW_LINKS);
+            if (attributes.isSymbolicLink() || attributes.isOther()) {
+                throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, projectPath);
+            }
+            if (!attributes.isRegularFile()) {
+                throw failure(WorkspaceErrorCode.NOT_REGULAR_FILE, operation, projectPath);
+            }
+            return attributes.size();
+        } catch (WorkspaceException exception) {
+            throw exception;
         } catch (IOException exception) {
             throw failure(WorkspaceErrorCode.IO_FAILURE, operation, projectPath);
         }
@@ -719,7 +842,7 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         }
     }
 
-    private static byte[] readBounded(
+    static byte[] readBoundedNoFollow(
             Path path,
             long maximum,
             String operation,
@@ -745,9 +868,11 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
             return output.toByteArray();
         } catch (WorkspaceException exception) {
             throw exception;
-        } catch (IOException | UnsupportedOperationException exception) {
+        } catch (UnsupportedOperationException exception) {
+            throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, projectPath);
+        } catch (IOException exception) {
             throw failure(
-                    exception instanceof UnsupportedOperationException
+                    linkLike(path)
                             ? WorkspaceErrorCode.LINK_ESCAPE
                             : WorkspaceErrorCode.IO_FAILURE,
                     operation,
