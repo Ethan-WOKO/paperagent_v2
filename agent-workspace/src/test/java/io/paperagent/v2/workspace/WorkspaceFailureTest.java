@@ -23,6 +23,7 @@ import static io.paperagent.v2.workspace.WorkspaceTestSupport.VERSION;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.assertBytes;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.file;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.materialize;
+import static io.paperagent.v2.workspace.WorkspaceTestSupport.onlyContainer;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.provider;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.snapshot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -125,7 +126,7 @@ class WorkspaceFailureTest {
     }
 
     @Test
-    void failedReplaceFallbackPreservesPriorFile() {
+    void failedReplaceFallbackPreservesPriorFileAndRemovesStagingArtifacts() throws Exception {
         ProjectVersionSnapshot snapshot = snapshot(file("base.txt", "before"));
         LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
                 root,
@@ -139,6 +140,35 @@ class WorkspaceFailureTest {
                 WorkspaceErrorCode.IO_FAILURE,
                 () -> provider.replace(workspace, new ProjectPath("base.txt"), bytes("after")));
         assertBytes("before", provider.read(workspace, new ProjectPath("base.txt")));
+        assertDirectoryEmpty(onlyContainer(root).resolve("staging"));
+    }
+
+    @Test
+    void boundedBackupReadRejectsGrowthWithoutApplyingReplacement() throws Exception {
+        ProjectVersionSnapshot snapshot = snapshot(file("base.txt", "before"));
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                root,
+                ignored -> snapshot,
+                (source, maximum, operation, projectPath) -> {
+                    Files.write(source, bytes("!"), java.nio.file.StandardOpenOption.APPEND);
+                    return LocalWorkspaceProvider.readBoundedNoFollow(
+                            source,
+                            maximum,
+                            operation,
+                            projectPath);
+                });
+        WorkspaceRef workspace = materialize(
+                provider,
+                "bounded-backup",
+                new WorkspaceLimits(6, 64, 2));
+        Path dataFile = onlyContainer(root).resolve("data").resolve("base.txt");
+
+        assertCode(
+                WorkspaceErrorCode.FILE_LIMIT_EXCEEDED,
+                () -> provider.replace(workspace, new ProjectPath("base.txt"), bytes("after")));
+
+        assertEquals("before!", Files.readString(dataFile));
+        assertDirectoryEmpty(onlyContainer(root).resolve("staging"));
     }
 
     @Test
@@ -297,7 +327,11 @@ class WorkspaceFailureTest {
     }
 
     private void assertRootEmpty() throws Exception {
-        try (var children = Files.list(root)) {
+        assertDirectoryEmpty(root);
+    }
+
+    private static void assertDirectoryEmpty(Path directory) throws Exception {
+        try (var children = Files.list(directory)) {
             assertTrue(children.findAny().isEmpty());
         }
     }

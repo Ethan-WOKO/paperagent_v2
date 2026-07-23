@@ -14,8 +14,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.VERSION;
+import static io.paperagent.v2.workspace.WorkspaceTestSupport.assertBytes;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.dataRoot;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.file;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.materialize;
@@ -23,6 +25,7 @@ import static io.paperagent.v2.workspace.WorkspaceTestSupport.onlyContainer;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.provider;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.snapshot;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -95,6 +98,115 @@ class WorkspaceLinkSecurityTest {
         provider.cleanup(workspace);
     }
 
+    @Test
+    void backupReadRejectsTargetSwappedToRealSymbolicLink() throws Exception {
+        Path providerRoot = root.resolve("provider");
+        Path outsideFile = root.resolve("outside.txt");
+        Files.createDirectories(providerRoot);
+        Files.writeString(outsideFile, "outside");
+        requireSymbolicLinkSupport(root.resolve("probe-link"), outsideFile);
+        ProjectVersionSnapshot snapshot = snapshot(file("inside.txt", "inside"));
+        AtomicBoolean swapped = new AtomicBoolean();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                providerRoot,
+                ignored -> snapshot,
+                (source, maximum, operation, projectPath) -> {
+                    Files.delete(source);
+                    Files.createSymbolicLink(source, outsideFile);
+                    swapped.set(true);
+                    return LocalWorkspaceProvider.readBoundedNoFollow(
+                            source,
+                            maximum,
+                            operation,
+                            projectPath);
+                });
+        WorkspaceRef workspace = materialize(provider, "backup-link-swap");
+        Path target = dataRoot(providerRoot).resolve("inside.txt");
+
+        assertLinkEscape(() -> provider.replace(
+                workspace,
+                new ProjectPath("inside.txt"),
+                "replacement".getBytes(StandardCharsets.UTF_8)));
+
+        assertTrue(swapped.get());
+        assertTrue(Files.isSymbolicLink(target));
+        assertEquals("outside", Files.readString(outsideFile));
+        assertDirectoryEmpty(onlyContainer(providerRoot).resolve("staging"));
+
+        Files.delete(target);
+        Files.writeString(target, "inside");
+        provider.cleanup(workspace);
+    }
+
+    @Test
+    void failedReplaceRestoresBackupByReplacingSwappedLinkEntry() throws Exception {
+        Path providerRoot = root.resolve("provider");
+        Path outsideFile = root.resolve("outside.txt");
+        Files.createDirectories(providerRoot);
+        Files.writeString(outsideFile, "outside");
+        requireSymbolicLinkSupport(root.resolve("probe-link"), outsideFile);
+        ProjectVersionSnapshot snapshot = snapshot(file("inside.txt", "before"));
+        AtomicBoolean moveAttempted = new AtomicBoolean();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                providerRoot,
+                ignored -> snapshot,
+                (source, target, replace) -> {
+                    moveAttempted.set(true);
+                    Files.delete(target);
+                    Files.createSymbolicLink(target, outsideFile);
+                    throw new IOException("forced replace failure after target swap");
+                });
+        WorkspaceRef workspace = materialize(provider, "restore-link-swap");
+
+        WorkspaceException failure = assertThrows(
+                WorkspaceException.class,
+                () -> provider.replace(
+                        workspace,
+                        new ProjectPath("inside.txt"),
+                        "after".getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals(WorkspaceErrorCode.IO_FAILURE, failure.code());
+        assertTrue(moveAttempted.get());
+        Path target = dataRoot(providerRoot).resolve("inside.txt");
+        assertFalse(Files.isSymbolicLink(target));
+        assertBytes("before", provider.read(workspace, new ProjectPath("inside.txt")));
+        assertEquals("outside", Files.readString(outsideFile));
+        assertDirectoryEmpty(onlyContainer(providerRoot).resolve("staging"));
+        provider.cleanup(workspace);
+    }
+
+    @Test
+    void replaceRejectsOccupiedBackupLinkWithoutFollowingIt() throws Exception {
+        Path providerRoot = root.resolve("provider");
+        Path outsideFile = root.resolve("outside.txt");
+        Files.createDirectories(providerRoot);
+        Files.writeString(outsideFile, "outside");
+        requireSymbolicLinkSupport(root.resolve("probe-link"), outsideFile);
+        LocalWorkspaceProvider provider = provider(
+                providerRoot,
+                snapshot(file("inside.txt", "before")));
+        WorkspaceRef workspace = materialize(provider, "occupied-backup-link");
+        Path staging = onlyContainer(providerRoot).resolve("staging");
+        Path backup = staging.resolve(
+                WorkspaceHashes.sha256Text("inside.txt") + ".bak");
+        Files.createSymbolicLink(backup, outsideFile);
+
+        WorkspaceException failure = assertThrows(
+                WorkspaceException.class,
+                () -> provider.replace(
+                        workspace,
+                        new ProjectPath("inside.txt"),
+                        "after".getBytes(StandardCharsets.UTF_8)));
+
+        assertEquals(WorkspaceErrorCode.TEMPORARY_PATH_OCCUPIED, failure.code());
+        assertTrue(Files.isSymbolicLink(backup));
+        assertEquals("outside", Files.readString(outsideFile));
+        assertBytes("before", provider.read(workspace, new ProjectPath("inside.txt")));
+
+        Files.delete(backup);
+        provider.cleanup(workspace);
+    }
+
     private static void createRequiredSymbolicLink(Path link, Path target) throws IOException {
         try {
             Files.createSymbolicLink(link, target);
@@ -105,6 +217,17 @@ class WorkspaceLinkSecurityTest {
                         "Windows test host cannot create symbolic links; Linux CI must execute this test");
             }
             throw exception;
+        }
+    }
+
+    private static void requireSymbolicLinkSupport(Path probe, Path target) throws IOException {
+        createRequiredSymbolicLink(probe, target);
+        Files.delete(probe);
+    }
+
+    private static void assertDirectoryEmpty(Path directory) throws IOException {
+        try (var entries = Files.list(directory)) {
+            assertTrue(entries.findAny().isEmpty());
         }
     }
 
