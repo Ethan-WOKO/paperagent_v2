@@ -47,6 +47,145 @@ class CheckpointValidationTest {
     }
 
     @Test
+    void acceptsCheckpointBoundToLatestRevision() {
+        PlanRevision first = ContractFixtures.revision1();
+        PlanRevision latest = revision2(first);
+        Plan plan = ContractFixtures.plan(first, latest);
+        Checkpoint checkpoint = checkpointAt(
+                latest,
+                5,
+                T0.plusSeconds(5),
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of());
+
+        assertDoesNotThrow(() -> CheckpointValidators.requireValid(
+                checkpoint, ContractFixtures.taskFrame(), plan, null));
+    }
+
+    @Test
+    void rejectsHistoricalRevisionEvenWhenItsIdentityIsCanonical() {
+        PlanRevision first = ContractFixtures.revision1();
+        PlanRevision latest = revision2(first);
+        Plan plan = ContractFixtures.plan(first, latest);
+        Checkpoint checkpoint = checkpointAt(
+                first,
+                5,
+                T0.plusSeconds(5),
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of());
+
+        assertSingleViolation(
+                CheckpointValidators.validate(
+                        checkpoint, ContractFixtures.taskFrame(), plan, null),
+                ViolationCode.CHECKPOINT_REVISION_MISMATCH,
+                "checkpoint.revisionId");
+    }
+
+    @Test
+    void allowsPreviousHistoricalRevisionWhenCurrentAdvancesToLatest() {
+        PlanRevision first = ContractFixtures.revision1();
+        PlanRevision latest = revision2(first);
+        Plan plan = ContractFixtures.plan(first, latest);
+        Checkpoint previous = checkpointAt(
+                first,
+                5,
+                T0.plusSeconds(5),
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of());
+        Checkpoint current = checkpointAt(
+                latest,
+                6,
+                T0.plusSeconds(6),
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of());
+
+        assertDoesNotThrow(() -> CheckpointValidators.requireValid(
+                current, ContractFixtures.taskFrame(), plan, previous));
+    }
+
+    @Test
+    void rejectsWrongLatestRevisionIdOrNumberWithStableCodeAndPath() {
+        PlanRevision first = ContractFixtures.revision1();
+        PlanRevision latest = revision2(first);
+        Plan plan = ContractFixtures.plan(first, latest);
+        Checkpoint wrongId = new Checkpoint(
+                TASK_ID,
+                PLAN_ID,
+                new PlanRevisionId("revision-other"),
+                latest.number(),
+                5,
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of(),
+                T0.plusSeconds(5));
+        Checkpoint wrongNumber = new Checkpoint(
+                TASK_ID,
+                PLAN_ID,
+                latest.id(),
+                first.number(),
+                5,
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of(),
+                T0.plusSeconds(5));
+
+        assertSingleViolation(
+                CheckpointValidators.validate(
+                        wrongId, ContractFixtures.taskFrame(), plan, null),
+                ViolationCode.CHECKPOINT_REVISION_MISMATCH,
+                "checkpoint.revisionId");
+        assertSingleViolation(
+                CheckpointValidators.validate(
+                        wrongNumber, ContractFixtures.taskFrame(), plan, null),
+                ViolationCode.CHECKPOINT_REVISION_MISMATCH,
+                "checkpoint.revisionId");
+    }
+
+    @Test
+    void validatesStepStatesAndCompletionFactsAgainstLatestRevision() {
+        PlanRevision first = ContractFixtures.revision1();
+        PlanStep retainedStep = first.steps().get(0);
+        CompletionFact completedFact = new CompletionFact(
+                STEP_1,
+                "latest outcome",
+                T0.plusSeconds(1),
+                List.of(new ReceiptId("receipt-latest")));
+        PlanRevision latest = revision2(
+                first,
+                List.of(retainedStep),
+                Map.of(STEP_1, completedFact));
+        Plan plan = ContractFixtures.plan(first, latest);
+        Checkpoint checkpoint = new Checkpoint(
+                TASK_ID,
+                PLAN_ID,
+                latest.id(),
+                latest.number(),
+                5,
+                PlanExecutionState.ACTIVE,
+                Map.of(
+                        STEP_1, StepExecutionState.ACTIVE,
+                        STEP_2, StepExecutionState.NOT_STARTED),
+                List.of(),
+                T0.plusSeconds(5));
+
+        List<ContractViolation> violations =
+                CheckpointValidators.validate(
+                        checkpoint, ContractFixtures.taskFrame(), plan, null);
+        assertContains(
+                violations,
+                ViolationCode.CHECKPOINT_UNKNOWN_STEP,
+                "checkpoint.stepStates." + STEP_2.value());
+        assertContains(
+                violations,
+                ViolationCode.CHECKPOINT_STATE_INCONSISTENT,
+                "checkpoint.stepStates." + STEP_1.value());
+    }
+
+    @Test
     void rejectsUnknownStep() {
         PlanRevision revision = ContractFixtures.revision1();
         Plan plan = ContractFixtures.plan(revision);
@@ -210,15 +349,7 @@ class CheckpointValidationTest {
     @Test
     void rejectsRevisionRegression() {
         PlanRevision first = ContractFixtures.revision1();
-        PlanRevision second = new PlanRevision(
-                new PlanRevisionId("revision-2"),
-                TASK_ID,
-                2,
-                Optional.of(first.id()),
-                "continue",
-                T0.plusSeconds(2),
-                first.steps(),
-                Map.of());
+        PlanRevision second = revision2(first);
         Plan plan = ContractFixtures.plan(first, second);
         Checkpoint previous = checkpointAt(
                 second, 5, T0.plusSeconds(5), PlanExecutionState.ACTIVE, notStartedStates(), List.of());
@@ -451,6 +582,25 @@ class CheckpointValidationTest {
                 Map.of(STEP_1, first, STEP_2, second));
     }
 
+    private static PlanRevision revision2(PlanRevision first) {
+        return revision2(first, first.steps(), Map.of());
+    }
+
+    private static PlanRevision revision2(
+            PlanRevision first,
+            List<PlanStep> steps,
+            Map<PlanStepId, CompletionFact> completedFacts) {
+        return new PlanRevision(
+                new PlanRevisionId("revision-2"),
+                TASK_ID,
+                2,
+                Optional.of(first.id()),
+                "continue",
+                T0.plusSeconds(2),
+                steps,
+                completedFacts);
+    }
+
     private static Map<PlanStepId, StepExecutionState> succeededStates() {
         return Map.of(STEP_1, StepExecutionState.SUCCEEDED, STEP_2, StepExecutionState.SUCCEEDED);
     }
@@ -462,5 +612,25 @@ class CheckpointValidationTest {
     private static void assertContains(List<ContractViolation> violations, ViolationCode code) {
         assertTrue(violations.stream().anyMatch(violation -> violation.code() == code),
                 () -> "Expected " + code + " in " + violations);
+    }
+
+    private static void assertContains(
+            List<ContractViolation> violations,
+            ViolationCode code,
+            String path) {
+        assertTrue(
+                violations.stream().anyMatch(
+                        violation -> violation.code() == code
+                                && violation.path().equals(path)),
+                () -> "Expected " + code + " at " + path + " in " + violations);
+    }
+
+    private static void assertSingleViolation(
+            List<ContractViolation> violations,
+            ViolationCode code,
+            String path) {
+        assertEquals(1, violations.size());
+        assertEquals(code, violations.get(0).code());
+        assertEquals(path, violations.get(0).path());
     }
 }

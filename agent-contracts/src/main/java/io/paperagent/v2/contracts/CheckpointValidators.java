@@ -28,13 +28,11 @@ public final class CheckpointValidators {
             violations.add(Contracts.violation(ViolationCode.CHECKPOINT_PLAN_MISMATCH,
                     "checkpoint.planId", "checkpoint references another Plan"));
         }
-        PlanRevision revision = plan.revisions().stream()
-                .filter(item -> item.id().equals(checkpoint.revisionId()))
-                .findFirst()
-                .orElse(null);
-        if (revision == null || revision.number() != checkpoint.revisionNumber()) {
+        PlanRevision revision = plan.latestRevision();
+        if (!revision.id().equals(checkpoint.revisionId())
+                || revision.number() != checkpoint.revisionNumber()) {
             violations.add(Contracts.violation(ViolationCode.CHECKPOINT_REVISION_MISMATCH,
-                    "checkpoint.revisionId", "checkpoint must reference an exact Plan revision"));
+                    "checkpoint.revisionId", "checkpoint must reference the latest Plan revision"));
         } else {
             Set<PlanStepId> knownSteps = new HashSet<>();
             revision.steps().forEach(step -> knownSteps.add(step.id()));
