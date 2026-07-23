@@ -1,5 +1,8 @@
 package io.paperagent.v2.persistence;
 
+import java.time.Clock;
+import java.util.Objects;
+
 public final class InMemoryPersistence {
     private final TaskFrameRepository taskFrames;
     private final PlanRepository plans;
@@ -11,7 +14,12 @@ public final class InMemoryPersistence {
     private final IdempotencyRepository idempotency;
 
     public InMemoryPersistence() {
-        InMemoryState state = new InMemoryState();
+        this(Clock.systemUTC());
+    }
+
+    public InMemoryPersistence(Clock leaseClock) {
+        InMemoryState state =
+                new InMemoryState(Objects.requireNonNull(leaseClock, "leaseClock"));
         taskFrames = new InMemoryTaskFrameRepository(state);
         plans = new InMemoryPlanRepository(state);
         events = new InMemoryEventRepository(state);

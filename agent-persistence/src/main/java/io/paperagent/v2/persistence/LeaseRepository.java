@@ -9,16 +9,14 @@ public interface LeaseRepository {
             PlanId planId,
             String ownerId,
             String leaseToken,
-            Instant now,
             Instant expiresAt);
 
     PersistenceResult<LeaseRecord> renew(
             PlanId planId,
             String leaseToken,
-            Instant now,
             Instant expiresAt);
 
-    PersistenceResult<LeaseRecord> release(PlanId planId, String leaseToken, Instant now);
+    PersistenceResult<LeaseRecord> release(PlanId planId, String leaseToken);
 
     PersistenceResult<LeaseRecord> find(PlanId planId);
 }

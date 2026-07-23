@@ -30,6 +30,7 @@ import io.paperagent.v2.contracts.TaskFrameId;
 import io.paperagent.v2.contracts.TextValue;
 import io.paperagent.v2.contracts.ToolCallId;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -109,7 +110,11 @@ final class PersistenceFixtures {
     }
 
     static Plan plan() {
-        return new Plan(PLAN_ID, TASK_ID, List.of(revision1()));
+        return plan(PLAN_ID);
+    }
+
+    static Plan plan(PlanId planId) {
+        return new Plan(planId, TASK_ID, List.of(revision1()));
     }
 
     static EventEnvelope event(String id, long sequence) {
@@ -161,7 +166,15 @@ final class PersistenceFixtures {
     }
 
     static InMemoryPersistence initializedPersistence() {
-        InMemoryPersistence persistence = new InMemoryPersistence();
+        return initializedPersistence(new InMemoryPersistence());
+    }
+
+    static InMemoryPersistence initializedPersistence(Clock leaseClock) {
+        return initializedPersistence(new InMemoryPersistence(leaseClock));
+    }
+
+    private static InMemoryPersistence initializedPersistence(
+            InMemoryPersistence persistence) {
         requireApplied(persistence.taskFrames().create(taskFrame()));
         requireApplied(persistence.plans().create(plan()));
         return persistence;
