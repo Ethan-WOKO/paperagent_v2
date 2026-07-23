@@ -25,6 +25,7 @@ final class InMemoryState {
     final Map<EventStreamKey, NavigableMap<Long, EventEnvelope>> eventStreams = new HashMap<>();
     final Map<ReceiptId, ExecutionReceipt> receipts = new LinkedHashMap<>();
     final Map<PlanId, VersionedCheckpoint> checkpoints = new LinkedHashMap<>();
+    final Map<PlanId, PersistedPlanBootstrap> planBootstraps = new LinkedHashMap<>();
     final Map<PlanId, LeaseRecord> leases = new HashMap<>();
     final Map<PlanId, Long> fencingTokens = new HashMap<>();
     final Set<String> usedLeaseTokens = new HashSet<>();

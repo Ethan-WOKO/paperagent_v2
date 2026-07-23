@@ -19,6 +19,7 @@ class PublicBoundaryTest {
                 EventRepository.class,
                 ReceiptRepository.class,
                 CheckpointRepository.class,
+                PlanBootstrapRepository.class,
                 LeaseRepository.class,
                 IdempotencyRepository.class);
 
@@ -45,6 +46,7 @@ class PublicBoundaryTest {
                 InMemoryEventRepository.class,
                 InMemoryReceiptRepository.class,
                 InMemoryCheckpointRepository.class,
+                InMemoryPlanBootstrapRepository.class,
                 InMemoryLeaseRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
