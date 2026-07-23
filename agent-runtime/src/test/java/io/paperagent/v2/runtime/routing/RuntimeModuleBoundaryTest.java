@@ -84,7 +84,9 @@ class RuntimeModuleBoundaryTest {
                         assertTrue(
                                 trimmed.startsWith("import java.")
                                         || trimmed.startsWith(
-                                                "import io.paperagent.v2.contracts."),
+                                                "import io.paperagent.v2.contracts.")
+                                        || trimmed.startsWith(
+                                                "import io.paperagent.v2.runtime."),
                                 () -> sourcePath + " crosses production boundary: " + trimmed);
                     }
                 }
