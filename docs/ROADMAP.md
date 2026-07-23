@@ -13,7 +13,7 @@
 
 ## Wave 1：Runtime Contracts
 
-状态：`IN_PROGRESS`
+状态：`COMPLETE`
 
 - 建立模块骨架。
 - 定义 TaskFrame、Route、Plan、Revision、Step、Checkpoint。
@@ -21,6 +21,8 @@
 - 只实现纯契约、校验和契约测试。
 
 ## Wave 2：独立基础能力
+
+状态：`PLANNING`（尚未实现）
 
 可在契约冻结后并行：
 
