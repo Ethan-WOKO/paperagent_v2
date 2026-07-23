@@ -49,7 +49,8 @@ class PlanningModuleBoundaryTest {
             "Thread.sleep");
 
     @Test
-    void runtimeProductionDependenciesRemainContractsAndJdkOnly() throws Exception {
+    void runtimeProductionDependenciesRemainContractsAndPersistenceOnly()
+            throws Exception {
         Path module = moduleDirectory();
         var document = DocumentBuilderFactory.newInstance()
                 .newDocumentBuilder()
@@ -68,7 +69,9 @@ class PlanningModuleBoundaryTest {
             }
         }
         assertEquals(
-                List.of("io.paperagent.v2:agent-contracts"),
+                List.of(
+                        "io.paperagent.v2:agent-contracts",
+                        "io.paperagent.v2:agent-persistence"),
                 productionDependencies);
         assertEquals(List.of("org.junit.jupiter:junit-jupiter"), testDependencies);
     }
