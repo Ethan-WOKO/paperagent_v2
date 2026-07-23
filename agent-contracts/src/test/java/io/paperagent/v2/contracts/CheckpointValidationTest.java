@@ -17,6 +17,36 @@ import org.junit.jupiter.api.Test;
 
 class CheckpointValidationTest {
     @Test
+    void acceptsZeroAsTheNoEventsCursor() {
+        PlanRevision revision = ContractFixtures.revision1();
+        Plan plan = ContractFixtures.plan(revision);
+        Checkpoint checkpoint = checkpoint(
+                PLAN_ID,
+                revision,
+                0,
+                PlanExecutionState.NOT_STARTED,
+                notStartedStates());
+
+        assertEquals(0, checkpoint.lastEventSequence());
+        assertDoesNotThrow(() -> CheckpointValidators.requireValid(
+                checkpoint, ContractFixtures.taskFrame(), plan, null));
+    }
+
+    @Test
+    void rejectsNegativeEventSequenceWithStableCodeAndPath() {
+        PlanRevision revision = ContractFixtures.revision1();
+        ContractViolationException exception = ContractFixtures.violation(() -> checkpoint(
+                PLAN_ID,
+                revision,
+                -1,
+                PlanExecutionState.NOT_STARTED,
+                notStartedStates()));
+
+        assertEquals(ViolationCode.EVENT_SEQUENCE_REGRESSION, exception.primaryCode());
+        assertEquals("checkpoint.lastEventSequence", exception.violations().get(0).path());
+    }
+
+    @Test
     void rejectsUnknownStep() {
         PlanRevision revision = ContractFixtures.revision1();
         Plan plan = ContractFixtures.plan(revision);
