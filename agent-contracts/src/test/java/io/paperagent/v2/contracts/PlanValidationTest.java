@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -142,6 +143,46 @@ class PlanValidationTest {
         List<ContractViolation> violations =
                 PlanValidators.validateCompletedFactPreservation(first, second);
         assertEquals(ViolationCode.COMPLETED_FACT_REDEFINED, violations.get(0).code());
+    }
+
+    @Test
+    void publicStepGraphValidatorReturnsStableViolationForNullElement() {
+        List<ContractViolation> violations =
+                PlanValidators.validateStepGraph(Arrays.asList((PlanStep) null));
+        assertEquals(ViolationCode.NULL_COLLECTION_ELEMENT, violations.get(0).code());
+    }
+
+    @Test
+    void publicCompletedFactValidatorReturnsStableViolationForMissingRevision() {
+        assertEquals(
+                ViolationCode.REQUIRED_VALUE_MISSING,
+                PlanValidators.validateCompletedFactPreservation(null, ContractFixtures.revision1())
+                        .get(0).code());
+        assertEquals(
+                ViolationCode.REQUIRED_VALUE_MISSING,
+                PlanValidators.validateCompletedFactPreservation(ContractFixtures.revision1(), null)
+                        .get(0).code());
+    }
+
+    @Test
+    void publicValidatorsDoNotThrowForOtherExpectedNullInputs() {
+        assertEquals(
+                ViolationCode.REQUIRED_VALUE_MISSING,
+                PlanValidators.validateHistory(null, null).get(0).code());
+        assertEquals(
+                ViolationCode.REQUIRED_VALUE_MISSING,
+                CheckpointValidators.validate(null, null, null, null).get(0).code());
+        assertEquals(
+                ViolationCode.REQUIRED_VALUE_MISSING,
+                EventValidators.validateNext(null, null).get(0).code());
+    }
+
+    @Test
+    void publicHistoryValidatorReturnsStableViolationForNullRevisionElement() {
+        assertEquals(
+                ViolationCode.NULL_COLLECTION_ELEMENT,
+                PlanValidators.validateHistory(
+                        TASK_ID, Arrays.asList((PlanRevision) null)).get(0).code());
     }
 
     private static PlanRevision completedFirstRevision() {

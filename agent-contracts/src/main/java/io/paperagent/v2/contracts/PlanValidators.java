@@ -62,6 +62,11 @@ public final class PlanValidators {
             PlanRevision previous,
             PlanRevision current) {
         List<ContractViolation> violations = new ArrayList<>();
+        if (previous == null || current == null) {
+            violations.add(Contracts.violation(ViolationCode.REQUIRED_VALUE_MISSING,
+                    "planRevision", "both previous and current revisions are required"));
+            return List.copyOf(violations);
+        }
         Map<PlanStepId, PlanStep> currentSteps = indexSteps(current.steps());
         for (Map.Entry<PlanStepId, CompletionFact> entry : previous.completedFacts().entrySet()) {
             PlanStepId stepId = entry.getKey();
@@ -109,6 +114,17 @@ public final class PlanValidators {
         if (steps == null) {
             return List.of(Contracts.violation(ViolationCode.REQUIRED_VALUE_MISSING,
                     "planRevision.steps", "steps are required"));
+        }
+        if (steps.stream().anyMatch(step -> step == null)) {
+            return List.of(Contracts.violation(ViolationCode.NULL_COLLECTION_ELEMENT,
+                    "planRevision.steps", "steps must not contain null elements"));
+        }
+        Set<PlanStepId> seen = new HashSet<>();
+        for (PlanStep step : steps) {
+            if (!seen.add(step.id())) {
+                violations.add(Contracts.violation(ViolationCode.DUPLICATE_ID,
+                        "planRevision.steps", "duplicate step identifier: " + step.id().value()));
+            }
         }
         Map<PlanStepId, PlanStep> indexed = indexSteps(steps);
         for (PlanStep step : steps) {

@@ -57,6 +57,15 @@ public final class CheckpointValidators {
                             "a completion fact requires SUCCEEDED state"));
                 }
             });
+            checkpoint.stepStates().forEach((stepId, state) -> {
+                if (state == StepExecutionState.SUCCEEDED
+                        && !revision.completedFacts().containsKey(stepId)) {
+                    violations.add(Contracts.violation(
+                            ViolationCode.CHECKPOINT_COMPLETION_FACT_MISSING,
+                            "checkpoint.stepStates." + stepId.value(),
+                            "a SUCCEEDED step requires an append-only completion fact"));
+                }
+            });
             if (checkpoint.planState() == PlanExecutionState.SUCCEEDED
                     && checkpoint.stepStates().values().stream()
                     .anyMatch(state -> state != StepExecutionState.SUCCEEDED)) {
@@ -70,10 +79,39 @@ public final class CheckpointValidators {
                 violations.add(Contracts.violation(ViolationCode.CHECKPOINT_PLAN_MISMATCH,
                         "checkpoint", "checkpoint history must belong to the same task and Plan"));
             }
+            if (checkpoint.revisionNumber() < previous.revisionNumber()) {
+                violations.add(Contracts.violation(ViolationCode.CHECKPOINT_REVISION_REGRESSION,
+                        "checkpoint.revisionNumber", "checkpoint revision cannot regress"));
+            } else if (checkpoint.revisionNumber() == previous.revisionNumber()
+                    && !checkpoint.revisionId().equals(previous.revisionId())) {
+                violations.add(Contracts.violation(ViolationCode.CHECKPOINT_REVISION_REGRESSION,
+                        "checkpoint.revisionId",
+                        "the same revision number must retain the same revision ID"));
+            }
             if (checkpoint.lastEventSequence() < previous.lastEventSequence()) {
                 violations.add(Contracts.violation(ViolationCode.EVENT_SEQUENCE_REGRESSION,
                         "checkpoint.lastEventSequence", "event sequence cannot regress"));
             }
+            if (checkpoint.createdAt().isBefore(previous.createdAt())) {
+                violations.add(Contracts.violation(ViolationCode.CHECKPOINT_TIME_REGRESSION,
+                        "checkpoint.createdAt", "checkpoint creation time cannot regress"));
+            }
+            if (previous.planState().terminal()
+                    && checkpoint.planState() != previous.planState()) {
+                violations.add(Contracts.violation(ViolationCode.CHECKPOINT_STATE_REGRESSION,
+                        "checkpoint.planState",
+                        "a terminal Plan state cannot reopen or change to another terminal state"));
+            }
+            previous.stepStates().forEach((stepId, previousState) -> {
+                StepExecutionState currentState = checkpoint.stepStates().get(stepId);
+                if (previousState.terminal()
+                        && currentState != null
+                        && currentState != previousState) {
+                    violations.add(Contracts.violation(ViolationCode.CHECKPOINT_STATE_REGRESSION,
+                            "checkpoint.stepStates." + stepId.value(),
+                            "a terminal step state cannot reopen or change to another terminal state"));
+                }
+            });
         }
         return List.copyOf(violations);
     }
