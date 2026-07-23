@@ -3,6 +3,7 @@ package io.paperagent.v2.persistence;
 import io.paperagent.v2.contracts.Checkpoint;
 import io.paperagent.v2.contracts.PlanExecutionState;
 import io.paperagent.v2.contracts.PlanId;
+import io.paperagent.v2.contracts.PlanRevision;
 import io.paperagent.v2.contracts.PlanRevisionId;
 import io.paperagent.v2.contracts.ReceiptId;
 import io.paperagent.v2.contracts.StepExecutionState;
@@ -22,6 +23,50 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CheckpointRepositoryTest {
+    @Test
+    void rejectsHistoricalRevisionAfterPlanAppendThenCreatesLatestCheckpointAtVersionOne() {
+        InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
+        PlanRevision latest =
+                PersistenceFixtures.revision2("revision-2", "continue with latest");
+        PersistenceResult<?> appended = persistence.plans().appendRevision(
+                PersistenceFixtures.PLAN_ID,
+                1,
+                latest);
+        assertEquals(PersistenceOutcome.APPLIED, appended.outcome());
+
+        Checkpoint historical =
+                PersistenceFixtures.checkpoint(0, PersistenceFixtures.T0, List.of());
+        assertFailure(
+                persistence.checkpoints().save(0, historical),
+                PersistenceErrorCode.CHECKPOINT_VALIDATION_FAILED,
+                "checkpoint");
+        assertFailure(
+                persistence.checkpoints().find(PersistenceFixtures.PLAN_ID),
+                PersistenceErrorCode.NOT_FOUND,
+                "planId");
+
+        Checkpoint current = checkpoint(
+                PersistenceFixtures.TASK_ID,
+                PersistenceFixtures.PLAN_ID,
+                latest.id(),
+                latest.number(),
+                0,
+                PersistenceFixtures.T0.plusSeconds(10),
+                List.of());
+        PersistenceResult<VersionedCheckpoint> created =
+                persistence.checkpoints().save(0, current);
+
+        assertEquals(PersistenceOutcome.APPLIED, created.outcome());
+        VersionedCheckpoint expected = new VersionedCheckpoint(1, current);
+        assertEquals(expected, created.value().orElseThrow());
+        assertEquals(
+                expected,
+                persistence.checkpoints()
+                        .find(PersistenceFixtures.PLAN_ID)
+                        .value()
+                        .orElseThrow());
+    }
+
     @Test
     void initialSaveAndCasUpdateProduceMonotonicVersions() {
         InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
@@ -216,5 +261,13 @@ class CheckpointRepositoryTest {
             PersistenceErrorCode expectedCode) {
         assertEquals(PersistenceOutcome.REJECTED, result.outcome());
         assertEquals(expectedCode, result.failure().orElseThrow().code());
+    }
+
+    private static void assertFailure(
+            PersistenceResult<?> result,
+            PersistenceErrorCode expectedCode,
+            String expectedPath) {
+        assertFailure(result, expectedCode);
+        assertEquals(expectedPath, result.failure().orElseThrow().path());
     }
 }
