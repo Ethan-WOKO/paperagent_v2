@@ -18,9 +18,9 @@ public record EventEnvelope(
         Contracts.required(id, "event.id");
         Contracts.required(taskFrameId, "event.taskFrameId");
         Contracts.required(planId, "event.planId");
-        if (sequence < 0) {
+        if (sequence < 1) {
             Contracts.fail(ViolationCode.EVENT_SEQUENCE_REGRESSION, "event.sequence",
-                    "event sequence must not be negative");
+                    "event sequence must be positive");
         }
         Contracts.required(occurredAt, "event.occurredAt");
         Contracts.required(type, "event.type");
