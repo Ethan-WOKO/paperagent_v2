@@ -25,9 +25,6 @@ final class InMemoryCheckpointRepository implements CheckpointRepository {
         }
         synchronized (state.monitor) {
             VersionedCheckpoint current = state.checkpoints.get(checkpoint.planId());
-            if (current != null && current.checkpoint().equals(checkpoint)) {
-                return PersistenceResult.replayed(current);
-            }
             long currentVersion = current == null ? 0 : current.version();
             if (expectedVersion != currentVersion) {
                 return PersistenceResult.rejected(

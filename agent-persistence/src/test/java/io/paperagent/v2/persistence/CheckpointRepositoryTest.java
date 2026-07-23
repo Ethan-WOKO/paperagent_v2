@@ -31,7 +31,13 @@ class CheckpointRepositoryTest {
 
         assertEquals(PersistenceOutcome.APPLIED, created.outcome());
         assertEquals(1, created.value().orElseThrow().version());
-        assertEquals(PersistenceOutcome.REPLAYED, persistence.checkpoints().save(0, first).outcome());
+        assertFailure(
+                persistence.checkpoints().save(0, first),
+                PersistenceErrorCode.STALE_VERSION);
+        VersionedCheckpoint unchanged =
+                persistence.checkpoints().find(PersistenceFixtures.PLAN_ID).value().orElseThrow();
+        assertEquals(1, unchanged.version());
+        assertEquals(first, unchanged.checkpoint());
 
         Checkpoint second =
                 PersistenceFixtures.checkpoint(1, PersistenceFixtures.T0.plusSeconds(1), List.of());
