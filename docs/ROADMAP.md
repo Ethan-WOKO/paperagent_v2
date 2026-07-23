@@ -22,7 +22,7 @@
 
 ## Wave 2：独立基础能力
 
-状态：`PLANNING`（尚未实现）
+状态：`COMPLETE`
 
 可在契约冻结后并行：
 
@@ -32,7 +32,15 @@
 - Provider ports 和测试 Provider。
 - E2E Harness 骨架。
 
+完成标准：独立模块 PR、Workspace 安全加固 PR 和确定性基础组合 Harness 均已通过主对话
+审查、最新提交 CI 和阶段验收。详细证据见 [Wave 2 阶段验收](acceptance/WAVE_2.md)。
+
+该状态只表示独立基础边界完成，不表示 Runtime、真实模型、真实执行后端、产品 API 或 UI
+已经实现。
+
 ## Wave 3：Runtime 主链
+
+状态：`PLANNING`（尚未实现）
 
 - 二元 Router。
 - TaskFrame 构建和冻结。
