@@ -96,11 +96,21 @@ public final class CheckpointValidators {
                 violations.add(Contracts.violation(ViolationCode.CHECKPOINT_TIME_REGRESSION,
                         "checkpoint.createdAt", "checkpoint creation time cannot regress"));
             }
+            if (!checkpoint.receiptReferences().containsAll(previous.receiptReferences())) {
+                violations.add(Contracts.violation(ViolationCode.CHECKPOINT_RECEIPT_REGRESSION,
+                        "checkpoint.receiptReferences",
+                        "checkpoint receipt references are append-only and cannot be removed"));
+            }
             if (previous.planState().terminal()
                     && checkpoint.planState() != previous.planState()) {
                 violations.add(Contracts.violation(ViolationCode.CHECKPOINT_STATE_REGRESSION,
                         "checkpoint.planState",
                         "a terminal Plan state cannot reopen or change to another terminal state"));
+            } else if (previous.planState() != PlanExecutionState.NOT_STARTED
+                    && checkpoint.planState() == PlanExecutionState.NOT_STARTED) {
+                violations.add(Contracts.violation(ViolationCode.CHECKPOINT_STATE_REGRESSION,
+                        "checkpoint.planState",
+                        "a Plan that has started cannot return to NOT_STARTED"));
             }
             previous.stepStates().forEach((stepId, previousState) -> {
                 StepExecutionState currentState = checkpoint.stepStates().get(stepId);
@@ -110,6 +120,11 @@ public final class CheckpointValidators {
                     violations.add(Contracts.violation(ViolationCode.CHECKPOINT_STATE_REGRESSION,
                             "checkpoint.stepStates." + stepId.value(),
                             "a terminal step state cannot reopen or change to another terminal state"));
+                } else if (previousState != StepExecutionState.NOT_STARTED
+                        && currentState == StepExecutionState.NOT_STARTED) {
+                    violations.add(Contracts.violation(ViolationCode.CHECKPOINT_STATE_REGRESSION,
+                            "checkpoint.stepStates." + stepId.value(),
+                            "a step that has started cannot return to NOT_STARTED"));
                 }
             });
         }

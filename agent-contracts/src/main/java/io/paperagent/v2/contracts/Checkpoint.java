@@ -30,6 +30,7 @@ public record Checkpoint(
         Contracts.required(planState, "checkpoint.planState");
         stepStates = Contracts.map(stepStates, "checkpoint.stepStates");
         receiptReferences = Contracts.list(receiptReferences, "checkpoint.receiptReferences");
+        Contracts.unique(receiptReferences, receiptId -> receiptId, "checkpoint.receiptReferences");
         Contracts.required(createdAt, "checkpoint.createdAt");
     }
 }

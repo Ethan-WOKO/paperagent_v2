@@ -6,6 +6,7 @@ import static io.paperagent.v2.contracts.ContractFixtures.STEP_2;
 import static io.paperagent.v2.contracts.ContractFixtures.T0;
 import static io.paperagent.v2.contracts.ContractFixtures.TASK_ID;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -248,6 +249,123 @@ class CheckpointValidationTest {
 
         assertDoesNotThrow(() -> CheckpointValidators.requireValid(
                 current, ContractFixtures.taskFrame(), plan, previous));
+    }
+
+    @Test
+    void rejectsDuplicateReceiptReferenceInOneCheckpoint() {
+        ReceiptId receipt = new ReceiptId("receipt-1");
+        ContractViolationException exception = ContractFixtures.violation(() -> new Checkpoint(
+                TASK_ID,
+                PLAN_ID,
+                ContractFixtures.revision1().id(),
+                1,
+                1,
+                PlanExecutionState.NOT_STARTED,
+                notStartedStates(),
+                List.of(receipt, receipt),
+                T0));
+        assertEquals(ViolationCode.DUPLICATE_ID, exception.primaryCode());
+    }
+
+    @Test
+    void rejectsRemovalOfPreviouslyRecordedReceipt() {
+        PlanRevision revision = ContractFixtures.revision1();
+        Plan plan = ContractFixtures.plan(revision);
+        Checkpoint previous = checkpointAt(
+                revision,
+                5,
+                T0.plusSeconds(5),
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of(new ReceiptId("receipt-1"), new ReceiptId("receipt-2")));
+        Checkpoint current = checkpointAt(
+                revision,
+                6,
+                T0.plusSeconds(6),
+                PlanExecutionState.ACTIVE,
+                notStartedStates(),
+                List.of(new ReceiptId("receipt-2")));
+
+        assertContains(
+                CheckpointValidators.validate(current, ContractFixtures.taskFrame(), plan, previous),
+                ViolationCode.CHECKPOINT_RECEIPT_REGRESSION);
+    }
+
+    @Test
+    void rejectsPlanReturningToNotStarted() {
+        PlanRevision revision = ContractFixtures.revision1();
+        Plan plan = ContractFixtures.plan(revision);
+        for (PlanExecutionState previousState
+                : List.of(PlanExecutionState.ACTIVE, PlanExecutionState.PAUSED)) {
+            Checkpoint previous = checkpointAt(
+                    revision, 5, T0.plusSeconds(5), previousState, notStartedStates(), List.of());
+            Checkpoint current = checkpointAt(
+                    revision, 6, T0.plusSeconds(6), PlanExecutionState.NOT_STARTED,
+                    notStartedStates(), List.of());
+
+            assertContains(
+                    CheckpointValidators.validate(current, ContractFixtures.taskFrame(), plan, previous),
+                    ViolationCode.CHECKPOINT_STATE_REGRESSION);
+        }
+    }
+
+    @Test
+    void rejectsStepReturningToNotStarted() {
+        PlanRevision revision = ContractFixtures.revision1();
+        Plan plan = ContractFixtures.plan(revision);
+        for (StepExecutionState previousState
+                : List.of(StepExecutionState.ACTIVE, StepExecutionState.PAUSED)) {
+            Checkpoint previous = checkpointAt(
+                    revision,
+                    5,
+                    T0.plusSeconds(5),
+                    PlanExecutionState.ACTIVE,
+                    Map.of(STEP_1, previousState, STEP_2, StepExecutionState.NOT_STARTED),
+                    List.of());
+            Checkpoint current = checkpointAt(
+                    revision,
+                    6,
+                    T0.plusSeconds(6),
+                    PlanExecutionState.ACTIVE,
+                    notStartedStates(),
+                    List.of());
+
+            assertContains(
+                    CheckpointValidators.validate(current, ContractFixtures.taskFrame(), plan, previous),
+                    ViolationCode.CHECKPOINT_STATE_REGRESSION);
+        }
+    }
+
+    @Test
+    void acceptsPauseAndResumeForActivePlanAndStep() {
+        PlanRevision revision = ContractFixtures.revision1();
+        Plan plan = ContractFixtures.plan(revision);
+        Checkpoint active = checkpointAt(
+                revision,
+                5,
+                T0.plusSeconds(5),
+                PlanExecutionState.ACTIVE,
+                Map.of(STEP_1, StepExecutionState.ACTIVE, STEP_2, StepExecutionState.NOT_STARTED),
+                List.of());
+        Checkpoint paused = checkpointAt(
+                revision,
+                6,
+                T0.plusSeconds(6),
+                PlanExecutionState.PAUSED,
+                Map.of(STEP_1, StepExecutionState.PAUSED, STEP_2, StepExecutionState.NOT_STARTED),
+                List.of());
+        Checkpoint resumed = checkpointAt(
+                revision,
+                7,
+                T0.plusSeconds(7),
+                PlanExecutionState.ACTIVE,
+                Map.of(STEP_1, StepExecutionState.ACTIVE, STEP_2, StepExecutionState.NOT_STARTED),
+                List.of());
+
+        assertDoesNotThrow(() -> CheckpointValidators.requireValid(
+                paused, ContractFixtures.taskFrame(), plan, active));
+        assertDoesNotThrow(() -> CheckpointValidators.requireValid(
+                resumed, ContractFixtures.taskFrame(), plan, paused));
     }
 
     private static Checkpoint checkpoint(
