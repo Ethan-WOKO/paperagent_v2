@@ -120,7 +120,7 @@ class Wave2FoundationCompositionTest {
                             .orElseThrow()
                             .code());
             List<EventEnvelope> events = harness.persistence.events()
-                    .read(harness.planId, modelRequest.correlationId().value())
+                    .readAfter(harness.planId, 0)
                     .value()
                     .orElseThrow();
             assertTrue(events.isEmpty());

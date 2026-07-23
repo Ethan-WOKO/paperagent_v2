@@ -3,6 +3,13 @@ package io.paperagent.v2.contracts;
 import java.time.Instant;
 import java.util.Optional;
 
+/**
+ * One immutable event in a Plan-global sequence.
+ *
+ * <p>{@code sequence} is strictly increasing within one {@link PlanId};
+ * {@code correlationId} is tracing metadata and does not partition storage or
+ * recovery.
+ */
 public record EventEnvelope(
         EventId id,
         TaskFrameId taskFrameId,

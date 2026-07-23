@@ -1,12 +1,21 @@
 package io.paperagent.v2.persistence;
 
+import io.paperagent.v2.contracts.EventEnvelope;
+import io.paperagent.v2.contracts.EventId;
+import io.paperagent.v2.contracts.PlanId;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -51,5 +60,38 @@ class PublicBoundaryTest {
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
+    }
+
+    @Test
+    void eventRepositoryHasOnlyThePlanGlobalHardCutSurface() {
+        Map<String, Method> methods = Arrays.stream(
+                        EventRepository.class.getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()));
+
+        assertEquals(Set.of("append", "find", "readAfter"), methods.keySet());
+        assertMethod(
+                methods.get("append"),
+                PersistenceResult.class,
+                EventEnvelope.class);
+        assertMethod(
+                methods.get("find"),
+                PersistenceResult.class,
+                EventId.class);
+        assertMethod(
+                methods.get("readAfter"),
+                PersistenceResult.class,
+                PlanId.class,
+                long.class);
+        assertFalse(methods.containsKey("read"));
+    }
+
+    private static void assertMethod(
+            Method method,
+            Class<?> returnType,
+            Class<?>... parameterTypes) {
+        assertEquals(returnType, method.getReturnType());
+        assertArrayEquals(parameterTypes, method.getParameterTypes());
     }
 }

@@ -4,6 +4,13 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * An immutable aggregate recovery checkpoint.
+ *
+ * <p>{@code lastEventSequence} is a scalar Plan-global cursor. Zero means no
+ * real event has been incorporated; a positive value names the last
+ * incorporated event in the Plan stream.
+ */
 public record Checkpoint(
         TaskFrameId taskFrameId,
         PlanId planId,

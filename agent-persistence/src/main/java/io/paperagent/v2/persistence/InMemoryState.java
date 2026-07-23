@@ -22,7 +22,8 @@ final class InMemoryState {
     final Map<TaskFrameId, TaskFrame> taskFrames = new LinkedHashMap<>();
     final Map<PlanId, Plan> plans = new LinkedHashMap<>();
     final Map<EventId, EventEnvelope> eventsById = new LinkedHashMap<>();
-    final Map<EventStreamKey, NavigableMap<Long, EventEnvelope>> eventStreams = new HashMap<>();
+    final Map<PlanId, NavigableMap<Long, EventEnvelope>> eventStreams =
+            new HashMap<>();
     final Map<ReceiptId, ExecutionReceipt> receipts = new LinkedHashMap<>();
     final Map<PlanId, VersionedCheckpoint> checkpoints = new LinkedHashMap<>();
     final Map<PlanId, PersistedPlanBootstrap> planBootstraps = new LinkedHashMap<>();
@@ -31,6 +32,4 @@ final class InMemoryState {
     final Set<String> usedLeaseTokens = new HashSet<>();
     final Map<IdempotencyKey, IdempotencyRecord> idempotency = new LinkedHashMap<>();
 
-    record EventStreamKey(PlanId planId, String correlationId) {
-    }
 }

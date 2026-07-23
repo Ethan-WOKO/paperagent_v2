@@ -1,6 +1,8 @@
 package io.paperagent.v2.persistence;
 
 import io.paperagent.v2.contracts.Checkpoint;
+import io.paperagent.v2.contracts.EventEnvelope;
+import io.paperagent.v2.contracts.Plan;
 import io.paperagent.v2.contracts.PlanExecutionState;
 import io.paperagent.v2.contracts.PlanId;
 import io.paperagent.v2.contracts.PlanRevision;
@@ -86,6 +88,7 @@ class CheckpointRepositoryTest {
 
         Checkpoint second =
                 PersistenceFixtures.checkpoint(1, PersistenceFixtures.T0.plusSeconds(1), List.of());
+        persistence.events().append(PersistenceFixtures.event("event-1", 1));
         PersistenceResult<VersionedCheckpoint> updated =
                 persistence.checkpoints().save(1, second);
         assertEquals(PersistenceOutcome.APPLIED, updated.outcome());
@@ -155,6 +158,9 @@ class CheckpointRepositoryTest {
     @Test
     void invalidCheckpointHistoryCannotRegressEventsOrRemoveReceipts() {
         InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
+        persistence.events().append(PersistenceFixtures.event("event-1", 1));
+        persistence.events().append(PersistenceFixtures.event("event-2", 2));
+        persistence.events().append(PersistenceFixtures.event("event-3", 3));
         ReceiptId receiptId = new ReceiptId("receipt-1");
         Checkpoint first =
                 PersistenceFixtures.checkpoint(2, PersistenceFixtures.T0, List.of(receiptId));
@@ -176,6 +182,8 @@ class CheckpointRepositoryTest {
     @Test
     void exactlyOneConcurrentCasWriterWins() throws Exception {
         InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
+        persistence.events().append(PersistenceFixtures.event("event-1", 1));
+        persistence.events().append(PersistenceFixtures.event("event-2", 2));
         persistence.checkpoints().save(
                 0, PersistenceFixtures.checkpoint(0, PersistenceFixtures.T0, List.of()));
         Checkpoint candidateA =
@@ -212,6 +220,140 @@ class CheckpointRepositoryTest {
     }
 
     @Test
+    void checkpointCursorCanBeZeroOrRealAndCannotPointOutsideItsPlan() {
+        InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
+        EventEnvelope first = PersistenceFixtures.event("event-link-1", 1);
+        EventEnvelope second = PersistenceFixtures.event("event-link-2", 2);
+        EventEnvelope fourth = PersistenceFixtures.event("event-link-4", 4);
+        persistence.events().append(first);
+        persistence.events().append(second);
+        persistence.events().append(fourth);
+
+        Checkpoint zero =
+                PersistenceFixtures.checkpoint(0, PersistenceFixtures.T0, List.of());
+        assertEquals(
+                PersistenceOutcome.APPLIED,
+                persistence.checkpoints().save(0, zero).outcome());
+        Checkpoint lagging = PersistenceFixtures.checkpoint(
+                2,
+                PersistenceFixtures.T0.plusSeconds(2),
+                List.of());
+        PersistenceResult<VersionedCheckpoint> laggingSave =
+                persistence.checkpoints().save(1, lagging);
+        assertEquals(PersistenceOutcome.APPLIED, laggingSave.outcome());
+        assertEquals(2, laggingSave.value().orElseThrow().version());
+
+        PlanId otherPlanId = new PlanId("plan-cursor-other");
+        persistence.plans().create(new Plan(
+                otherPlanId,
+                PersistenceFixtures.TASK_ID,
+                List.of(PersistenceFixtures.revision1())));
+        persistence.events().append(eventForPlan(
+                "event-other-plan-3",
+                otherPlanId,
+                3));
+
+        VersionedCheckpoint unchanged = laggingSave.value().orElseThrow();
+        assertUnlinkedWithoutWrite(
+                persistence,
+                PersistenceFixtures.checkpoint(
+                        3,
+                        PersistenceFixtures.T0.plusSeconds(3),
+                        List.of()),
+                unchanged);
+        assertUnlinkedWithoutWrite(
+                persistence,
+                PersistenceFixtures.checkpoint(
+                        5,
+                        PersistenceFixtures.T0.plusSeconds(5),
+                        List.of()),
+                unchanged);
+
+        Checkpoint latest = PersistenceFixtures.checkpoint(
+                4,
+                PersistenceFixtures.T0.plusSeconds(4),
+                List.of());
+        PersistenceResult<VersionedCheckpoint> latestSave =
+                persistence.checkpoints().save(2, latest);
+        assertEquals(PersistenceOutcome.APPLIED, latestSave.outcome());
+        assertEquals(3, latestSave.value().orElseThrow().version());
+        assertEquals(latest, latestSave.value().orElseThrow().checkpoint());
+    }
+
+    @Test
+    void staleCasWinsBeforeCanonicalAndCursorLinkValidation() {
+        InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
+        Checkpoint current =
+                PersistenceFixtures.checkpoint(0, PersistenceFixtures.T0, List.of());
+        persistence.checkpoints().save(0, current);
+        Checkpoint unlinked = PersistenceFixtures.checkpoint(
+                99,
+                PersistenceFixtures.T0.plusSeconds(1),
+                List.of());
+
+        assertFailure(
+                persistence.checkpoints().save(0, unlinked),
+                PersistenceErrorCode.STALE_VERSION,
+                "expectedVersion");
+        assertEquals(
+                new VersionedCheckpoint(1, current),
+                persistence.checkpoints()
+                        .find(PersistenceFixtures.PLAN_ID)
+                        .value().orElseThrow());
+    }
+
+    @Test
+    void concurrentEventAppendAndCheckpointSaveIsSerializable()
+            throws Exception {
+        InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
+        Checkpoint zero =
+                PersistenceFixtures.checkpoint(0, PersistenceFixtures.T0, List.of());
+        persistence.checkpoints().save(0, zero);
+        EventEnvelope event = PersistenceFixtures.event("event-race-1", 1);
+        Checkpoint linked = PersistenceFixtures.checkpoint(
+                1,
+                PersistenceFixtures.T0.plusSeconds(1),
+                List.of());
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<PersistenceResult<EventEnvelope>> eventFuture =
+                    executor.submit(() -> appendAfterBarrier(
+                            persistence, barrier, event));
+            Future<PersistenceResult<VersionedCheckpoint>> checkpointFuture =
+                    executor.submit(() -> saveAfterBarrier(
+                            persistence, barrier, linked));
+
+            PersistenceResult<EventEnvelope> eventResult =
+                    eventFuture.get(5, TimeUnit.SECONDS);
+            PersistenceResult<VersionedCheckpoint> checkpointResult =
+                    checkpointFuture.get(5, TimeUnit.SECONDS);
+
+            assertEquals(PersistenceOutcome.APPLIED, eventResult.outcome());
+            VersionedCheckpoint stored = persistence.checkpoints()
+                    .find(PersistenceFixtures.PLAN_ID)
+                    .value().orElseThrow();
+            if (checkpointResult.outcome() == PersistenceOutcome.APPLIED) {
+                assertEquals(new VersionedCheckpoint(2, linked), stored);
+            } else {
+                assertFailure(
+                        checkpointResult,
+                        PersistenceErrorCode.CHECKPOINT_VALIDATION_FAILED,
+                        "checkpoint.lastEventSequence");
+                assertEquals(new VersionedCheckpoint(1, zero), stored);
+            }
+            assertEquals(
+                    List.of(event),
+                    persistence.events()
+                            .readAfter(PersistenceFixtures.PLAN_ID, 0)
+                            .value().orElseThrow());
+        } finally {
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     void nullAndInvalidCasInputsUseStableCodes() {
         InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
         assertFailure(
@@ -232,6 +374,48 @@ class CheckpointRepositoryTest {
             Checkpoint checkpoint) throws Exception {
         barrier.await(5, TimeUnit.SECONDS);
         return persistence.checkpoints().save(1, checkpoint);
+    }
+
+    private static PersistenceResult<EventEnvelope> appendAfterBarrier(
+            InMemoryPersistence persistence,
+            CyclicBarrier barrier,
+            EventEnvelope event) throws Exception {
+        barrier.await(5, TimeUnit.SECONDS);
+        return persistence.events().append(event);
+    }
+
+    private static EventEnvelope eventForPlan(
+            String id,
+            PlanId planId,
+            long sequence) {
+        EventEnvelope template = PersistenceFixtures.event(id, sequence);
+        return new EventEnvelope(
+                template.id(),
+                template.taskFrameId(),
+                planId,
+                sequence,
+                template.occurredAt(),
+                template.type(),
+                template.causationId(),
+                template.correlationId(),
+                template.payload());
+    }
+
+    private static void assertUnlinkedWithoutWrite(
+            InMemoryPersistence persistence,
+            Checkpoint candidate,
+            VersionedCheckpoint expectedStored) {
+        assertFailure(
+                persistence.checkpoints().save(
+                        expectedStored.version(),
+                        candidate),
+                PersistenceErrorCode.CHECKPOINT_VALIDATION_FAILED,
+                "checkpoint.lastEventSequence");
+        assertEquals(
+                expectedStored,
+                persistence.checkpoints()
+                        .find(PersistenceFixtures.PLAN_ID)
+                        .value().orElseThrow());
     }
 
     private static Checkpoint checkpoint(

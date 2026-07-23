@@ -11,5 +11,7 @@ public interface EventRepository {
 
     PersistenceResult<EventEnvelope> find(EventId eventId);
 
-    PersistenceResult<List<EventEnvelope>> read(PlanId planId, String correlationId);
+    PersistenceResult<List<EventEnvelope>> readAfter(
+            PlanId planId,
+            long exclusiveSequence);
 }
