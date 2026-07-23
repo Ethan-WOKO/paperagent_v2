@@ -8,14 +8,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RuntimeModuleBoundaryTest {
+    private static final String PERSISTENCE_PREFIX =
+            "io.paperagent.v2.persistence";
+    private static final Set<String> ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS = Set.of(
+            "import io.paperagent.v2.persistence.PlanBootstrapRepository;",
+            "import io.paperagent.v2.persistence.PersistenceResult;",
+            "import io.paperagent.v2.persistence.PersistedPlanBootstrap;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
-            "io.paperagent.v2.persistence",
+            PERSISTENCE_PREFIX,
             "io.paperagent.v2.workspace",
             "io.paperagent.v2.sandbox",
             "io.paperagent.v2.providers",
@@ -49,7 +56,7 @@ class RuntimeModuleBoundaryTest {
             "Thread.sleep");
 
     @Test
-    void productionDependsOnlyOnContractsAndJdk() throws Exception {
+    void productionDependsOnlyOnContractsPersistenceAndJdk() throws Exception {
         Path module = moduleDirectory();
         var document = DocumentBuilderFactory.newInstance()
                 .newDocumentBuilder()
@@ -68,7 +75,9 @@ class RuntimeModuleBoundaryTest {
             }
         }
         assertEquals(
-                List.of("io.paperagent.v2:agent-contracts"),
+                List.of(
+                        "io.paperagent.v2:agent-contracts",
+                        "io.paperagent.v2:agent-persistence"),
                 productionDependencies);
         assertEquals(List.of("org.junit.jupiter:junit-jupiter"), testDependencies);
 
@@ -78,6 +87,7 @@ class RuntimeModuleBoundaryTest {
             for (Path sourcePath : paths
                     .filter(path -> path.toString().endsWith(".java"))
                     .toList()) {
+                boolean bootstrapSource = isBootstrapSource(sourceRoot, sourcePath);
                 for (String line : Files.readAllLines(sourcePath)) {
                     String trimmed = line.trim();
                     if (trimmed.startsWith("import ")) {
@@ -86,7 +96,10 @@ class RuntimeModuleBoundaryTest {
                                         || trimmed.startsWith(
                                                 "import io.paperagent.v2.contracts.")
                                         || trimmed.startsWith(
-                                                "import io.paperagent.v2.runtime."),
+                                                "import io.paperagent.v2.runtime.")
+                                        || bootstrapSource
+                                                && ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS
+                                                        .contains(trimmed),
                                 () -> sourcePath + " crosses production boundary: " + trimmed);
                     }
                 }
@@ -101,14 +114,36 @@ class RuntimeModuleBoundaryTest {
             for (Path sourcePath : paths
                     .filter(path -> path.toString().endsWith(".java"))
                     .toList()) {
+                boolean bootstrapSource = isBootstrapSource(sourceRoot, sourcePath);
                 String source = Files.readString(sourcePath).toLowerCase();
                 for (String marker : FORBIDDEN_SOURCE_MARKERS) {
+                    if (marker.equals(PERSISTENCE_PREFIX) && bootstrapSource) {
+                        continue;
+                    }
                     assertFalse(
                             source.contains(marker.toLowerCase()),
                             () -> sourcePath + " contains forbidden marker " + marker);
                 }
+                for (String line : Files.readAllLines(sourcePath)) {
+                    if (line.contains(PERSISTENCE_PREFIX)) {
+                        String trimmed = line.trim();
+                        assertTrue(
+                                bootstrapSource
+                                        && ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS
+                                                .contains(trimmed),
+                                () -> sourcePath
+                                        + " contains non-allowlisted persistence reference: "
+                                        + trimmed);
+                    }
+                }
             }
         }
+    }
+
+    private static boolean isBootstrapSource(Path sourceRoot, Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(
+                Path.of("io", "paperagent", "v2", "runtime", "bootstrap"));
     }
 
     private static Path moduleDirectory() {
