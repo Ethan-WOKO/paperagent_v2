@@ -2,7 +2,7 @@
 
 面向科研 Project 的通用 Agent 新实现。
 
-当前状态：`BOOTSTRAP / DOCUMENTATION_ONLY`。仓库尚未迁移任何 V1 业务代码。
+当前状态：`WAVE_1 / RUNTIME_CONTRACTS_IN_PROGRESS`。Wave 0 已完成；仓库尚未迁移任何 V1 业务代码。
 
 V2 顶层只保留两种执行模式：
 
@@ -19,3 +19,13 @@ V2 顶层只保留两种执行模式：
 6. [docs/ROADMAP.md](docs/ROADMAP.md)
 
 V1 只作为行为、测试和成熟外围能力的参考来源。任何旧代码在完成迁移审查前都不得复制到本仓库。
+
+## 构建
+
+需要 Java 17 和 Maven 3.9+：
+
+```text
+mvn -B -ntp clean verify
+```
+
+Maven reactor 已建立九个架构模块。Wave 1 只在 `agent-contracts` 中定义纯 JDK 契约和确定性校验；其余模块当前为可编译边界，不包含 Runtime 行为。
