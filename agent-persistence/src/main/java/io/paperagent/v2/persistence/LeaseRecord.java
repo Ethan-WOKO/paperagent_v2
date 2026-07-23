@@ -5,6 +5,12 @@ import io.paperagent.v2.contracts.PlanId;
 import java.time.Instant;
 import java.util.Objects;
 
+/**
+ * A committed lease generation.
+ *
+ * <p>{@code acquiredAt} is the persistence adapter's trusted effective commit
+ * time. It is retained by renewals; callers do not supply observation time.
+ */
 public record LeaseRecord(
         PlanId planId,
         String ownerId,

@@ -16,22 +16,19 @@ final class InMemoryLeaseRepository implements LeaseRepository {
             PlanId planId,
             String ownerId,
             String leaseToken,
-            Instant now,
             Instant expiresAt) {
         PersistenceResult<LeaseRecord> invalid =
-                validateAcquire(planId, ownerId, leaseToken, now, expiresAt);
+                validateAcquire(planId, ownerId, leaseToken, expiresAt);
         if (invalid != null) {
             return invalid;
         }
         synchronized (state.monitor) {
+            Instant effectiveNow = state.observeLeaseTime();
             if (!state.plans.containsKey(planId)) {
                 return PersistenceChecks.notFound("planId");
             }
             LeaseRecord current = state.leases.get(planId);
-            if (current != null && now.isBefore(current.acquiredAt())) {
-                return PersistenceChecks.invalid("now");
-            }
-            if (current != null && !current.isExpiredAt(now)) {
+            if (current != null && !current.isExpiredAt(effectiveNow)) {
                 if (current.ownerId().equals(ownerId)
                         && current.leaseToken().equals(leaseToken)
                         && current.expiresAt().equals(expiresAt)) {
@@ -40,13 +37,16 @@ final class InMemoryLeaseRepository implements LeaseRepository {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.LEASE_HELD, "planId");
             }
+            if (!expiresAt.isAfter(effectiveNow)) {
+                return PersistenceChecks.invalid("expiresAt");
+            }
             if (state.usedLeaseTokens.contains(leaseToken)) {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.LEASE_TOKEN_INVALID, "leaseToken");
             }
             long fencingToken = state.fencingTokens.getOrDefault(planId, 0L) + 1;
             LeaseRecord acquired = new LeaseRecord(
-                    planId, ownerId, leaseToken, fencingToken, now, expiresAt);
+                    planId, ownerId, leaseToken, fencingToken, effectiveNow, expiresAt);
             state.fencingTokens.put(planId, fencingToken);
             state.usedLeaseTokens.add(leaseToken);
             state.leases.put(planId, acquired);
@@ -58,7 +58,6 @@ final class InMemoryLeaseRepository implements LeaseRepository {
     public PersistenceResult<LeaseRecord> renew(
             PlanId planId,
             String leaseToken,
-            Instant now,
             Instant expiresAt) {
         if (PersistenceChecks.missing(planId)) {
             return PersistenceChecks.invalid("planId");
@@ -66,28 +65,23 @@ final class InMemoryLeaseRepository implements LeaseRepository {
         if (PersistenceChecks.blank(leaseToken)) {
             return PersistenceChecks.invalid("leaseToken");
         }
-        if (PersistenceChecks.missing(now)) {
-            return PersistenceChecks.invalid("now");
-        }
-        if (PersistenceChecks.missing(expiresAt) || !expiresAt.isAfter(now)) {
+        if (PersistenceChecks.missing(expiresAt)) {
             return PersistenceChecks.invalid("expiresAt");
         }
         synchronized (state.monitor) {
+            Instant effectiveNow = state.observeLeaseTime();
             LeaseRecord current = state.leases.get(planId);
             if (current == null) {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.LEASE_NOT_HELD, "planId");
             }
-            if (now.isBefore(current.acquiredAt())) {
-                return PersistenceChecks.invalid("now");
-            }
             if (!current.leaseToken().equals(leaseToken)) {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.LEASE_TOKEN_INVALID, "leaseToken");
             }
-            if (current.isExpiredAt(now)) {
+            if (current.isExpiredAt(effectiveNow)) {
                 return PersistenceResult.rejected(
-                        PersistenceErrorCode.LEASE_EXPIRED, "now");
+                        PersistenceErrorCode.LEASE_EXPIRED, "planId");
             }
             if (current.expiresAt().equals(expiresAt)) {
                 return PersistenceResult.replayed(current);
@@ -110,33 +104,27 @@ final class InMemoryLeaseRepository implements LeaseRepository {
     @Override
     public PersistenceResult<LeaseRecord> release(
             PlanId planId,
-            String leaseToken,
-            Instant now) {
+            String leaseToken) {
         if (PersistenceChecks.missing(planId)) {
             return PersistenceChecks.invalid("planId");
         }
         if (PersistenceChecks.blank(leaseToken)) {
             return PersistenceChecks.invalid("leaseToken");
         }
-        if (PersistenceChecks.missing(now)) {
-            return PersistenceChecks.invalid("now");
-        }
         synchronized (state.monitor) {
+            Instant effectiveNow = state.observeLeaseTime();
             LeaseRecord current = state.leases.get(planId);
             if (current == null) {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.LEASE_NOT_HELD, "planId");
             }
-            if (now.isBefore(current.acquiredAt())) {
-                return PersistenceChecks.invalid("now");
-            }
             if (!current.leaseToken().equals(leaseToken)) {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.LEASE_TOKEN_INVALID, "leaseToken");
             }
-            if (current.isExpiredAt(now)) {
+            if (current.isExpiredAt(effectiveNow)) {
                 return PersistenceResult.rejected(
-                        PersistenceErrorCode.LEASE_EXPIRED, "now");
+                        PersistenceErrorCode.LEASE_EXPIRED, "planId");
             }
             state.leases.remove(planId);
             return PersistenceResult.applied(current);
@@ -149,10 +137,16 @@ final class InMemoryLeaseRepository implements LeaseRepository {
             return PersistenceChecks.invalid("planId");
         }
         synchronized (state.monitor) {
+            Instant effectiveNow = state.observeLeaseTime();
             LeaseRecord current = state.leases.get(planId);
-            return current == null
-                    ? PersistenceChecks.notFound("planId")
-                    : PersistenceResult.found(current);
+            if (current == null) {
+                return PersistenceChecks.notFound("planId");
+            }
+            if (current.isExpiredAt(effectiveNow)) {
+                return PersistenceResult.rejected(
+                        PersistenceErrorCode.LEASE_EXPIRED, "planId");
+            }
+            return PersistenceResult.found(current);
         }
     }
 
@@ -160,7 +154,6 @@ final class InMemoryLeaseRepository implements LeaseRepository {
             PlanId planId,
             String ownerId,
             String leaseToken,
-            Instant now,
             Instant expiresAt) {
         if (PersistenceChecks.missing(planId)) {
             return PersistenceChecks.invalid("planId");
@@ -171,10 +164,7 @@ final class InMemoryLeaseRepository implements LeaseRepository {
         if (PersistenceChecks.blank(leaseToken)) {
             return PersistenceChecks.invalid("leaseToken");
         }
-        if (PersistenceChecks.missing(now)) {
-            return PersistenceChecks.invalid("now");
-        }
-        if (PersistenceChecks.missing(expiresAt) || !expiresAt.isAfter(now)) {
+        if (PersistenceChecks.missing(expiresAt)) {
             return PersistenceChecks.invalid("expiresAt");
         }
         return null;
