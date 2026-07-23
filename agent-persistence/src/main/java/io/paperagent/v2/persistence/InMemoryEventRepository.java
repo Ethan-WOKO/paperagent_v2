@@ -38,20 +38,18 @@ final class InMemoryEventRepository implements EventRepository {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.TASK_FRAME_MISMATCH, "event.taskFrameId");
             }
-            InMemoryState.EventStreamKey key =
-                    new InMemoryState.EventStreamKey(event.planId(), event.correlationId());
-            NavigableMap<Long, EventEnvelope> stream = state.eventStreams.get(key);
+            NavigableMap<Long, EventEnvelope> stream =
+                    state.eventStreams.get(event.planId());
             if (stream != null && !stream.isEmpty()) {
                 EventEnvelope previous = stream.lastEntry().getValue();
-                if (!EventValidators.validateNext(previous, event).isEmpty()
-                        || stream.containsKey(event.sequence())) {
+                if (!EventValidators.validateNext(previous, event).isEmpty()) {
                     return PersistenceResult.rejected(
                             PersistenceErrorCode.EVENT_SEQUENCE_NOT_MONOTONIC, "event.sequence");
                 }
             }
             if (stream == null) {
                 stream = new TreeMap<>();
-                state.eventStreams.put(key, stream);
+                state.eventStreams.put(event.planId(), stream);
             }
             stream.put(event.sequence(), event);
             state.eventsById.put(event.id(), event);
@@ -73,22 +71,25 @@ final class InMemoryEventRepository implements EventRepository {
     }
 
     @Override
-    public PersistenceResult<List<EventEnvelope>> read(PlanId planId, String correlationId) {
+    public PersistenceResult<List<EventEnvelope>> readAfter(
+            PlanId planId,
+            long exclusiveSequence) {
         if (PersistenceChecks.missing(planId)) {
             return PersistenceChecks.invalid("planId");
         }
-        if (PersistenceChecks.invalidIdentifier(correlationId)) {
-            return PersistenceChecks.invalid("correlationId");
+        if (exclusiveSequence < 0) {
+            return PersistenceChecks.invalid("exclusiveSequence");
         }
         synchronized (state.monitor) {
             if (!state.plans.containsKey(planId)) {
                 return PersistenceChecks.notFound("planId");
             }
-            NavigableMap<Long, EventEnvelope> stream = state.eventStreams.get(
-                    new InMemoryState.EventStreamKey(planId, correlationId));
+            NavigableMap<Long, EventEnvelope> stream =
+                    state.eventStreams.get(planId);
             List<EventEnvelope> snapshot = stream == null
                     ? List.of()
-                    : List.copyOf(stream.values());
+                    : List.copyOf(
+                            stream.tailMap(exclusiveSequence, false).values());
             return PersistenceResult.found(snapshot);
         }
     }

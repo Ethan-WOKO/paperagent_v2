@@ -95,7 +95,20 @@ class ToolAndEventContractTest {
     }
 
     @Test
-    void rejectsTaskPlanOrCorrelationMismatch() {
+    void allowsCorrelationChangeWithinOnePlanGlobalSequence() {
+        EventEnvelope previous = event("event-1", 1);
+        EventEnvelope current = event(
+                "event-other-correlation",
+                TASK_ID,
+                PLAN_ID,
+                3,
+                "correlation-other");
+
+        assertTrue(EventValidators.validateNext(previous, current).isEmpty());
+    }
+
+    @Test
+    void rejectsTaskOrPlanMismatch() {
         EventEnvelope previous = event("event-1", 1);
         List<EventEnvelope> mismatchedEvents = List.of(
                 event(
@@ -109,13 +122,7 @@ class ToolAndEventContractTest {
                         TASK_ID,
                         new PlanId("plan-other"),
                         2,
-                        "correlation-1"),
-                event(
-                        "event-correlation-mismatch",
-                        TASK_ID,
-                        PLAN_ID,
-                        2,
-                        "correlation-other"));
+                        "correlation-1"));
 
         mismatchedEvents.forEach(current -> assertViolation(
                 EventValidators.validateNext(previous, current),

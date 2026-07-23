@@ -4,6 +4,7 @@ import io.paperagent.v2.contracts.EventEnvelope;
 import io.paperagent.v2.contracts.EventId;
 import io.paperagent.v2.contracts.ExecutionReceipt;
 import io.paperagent.v2.contracts.Plan;
+import io.paperagent.v2.contracts.PlanId;
 import io.paperagent.v2.contracts.PlanRevision;
 import io.paperagent.v2.contracts.PlanRevisionId;
 import io.paperagent.v2.contracts.TaskFrame;
@@ -119,39 +120,159 @@ class CoreRepositoryTest {
     }
 
     @Test
-    void eventsAreAppendOnlyOrderedAndReplaySafe() {
+    void eventsArePlanGlobalOrderedGapAwareAndReplaySafe() {
         InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
-        EventEnvelope first = PersistenceFixtures.event("event-1", 1);
-        EventEnvelope third = PersistenceFixtures.event("event-3", 3);
+        EventEnvelope first = event(
+                "event-1",
+                PersistenceFixtures.TASK_ID,
+                PersistenceFixtures.PLAN_ID,
+                1,
+                "correlation-a");
+        EventEnvelope second = event(
+                "event-2",
+                PersistenceFixtures.TASK_ID,
+                PersistenceFixtures.PLAN_ID,
+                2,
+                "correlation-b");
+        EventEnvelope fourth = event(
+                "event-4",
+                PersistenceFixtures.TASK_ID,
+                PersistenceFixtures.PLAN_ID,
+                4,
+                "correlation-b");
 
         assertEquals(PersistenceOutcome.APPLIED, persistence.events().append(first).outcome());
-        assertEquals(PersistenceOutcome.APPLIED, persistence.events().append(third).outcome());
+        assertEquals(PersistenceOutcome.APPLIED, persistence.events().append(second).outcome());
+        assertEquals(PersistenceOutcome.APPLIED, persistence.events().append(fourth).outcome());
         assertEquals(PersistenceOutcome.REPLAYED, persistence.events().append(first).outcome());
         List<EventEnvelope> events = persistence.events()
-                .read(PersistenceFixtures.PLAN_ID, "correlation-1")
+                .readAfter(PersistenceFixtures.PLAN_ID, 0)
                 .value().orElseThrow();
-        assertEquals(List.of(first, third), events);
+        assertEquals(List.of(first, second, fourth), events);
+        assertEquals(
+                List.of(second, fourth),
+                persistence.events()
+                        .readAfter(PersistenceFixtures.PLAN_ID, 1)
+                        .value().orElseThrow());
+        assertEquals(
+                List.of(fourth),
+                persistence.events()
+                        .readAfter(PersistenceFixtures.PLAN_ID, 3)
+                        .value().orElseThrow());
         assertThrows(UnsupportedOperationException.class, () -> events.add(first));
+        PersistenceResult<List<EventEnvelope>> atHighWaterResult =
+                persistence.events().readAfter(
+                        PersistenceFixtures.PLAN_ID,
+                        4);
+        List<EventEnvelope> atHighWater =
+                atHighWaterResult.value().orElseThrow();
+        PersistenceResult<List<EventEnvelope>> aboveHighWaterResult =
+                persistence.events().readAfter(
+                        PersistenceFixtures.PLAN_ID,
+                        100);
+        List<EventEnvelope> aboveHighWater =
+                aboveHighWaterResult.value().orElseThrow();
+        assertEquals(PersistenceOutcome.FOUND, atHighWaterResult.outcome());
+        assertEquals(PersistenceOutcome.FOUND, aboveHighWaterResult.outcome());
+        assertTrue(atHighWater.isEmpty());
+        assertTrue(aboveHighWater.isEmpty());
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> atHighWater.add(first));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> aboveHighWater.add(first));
 
         assertFailure(
-                persistence.events().append(PersistenceFixtures.event("event-2", 2)),
-                PersistenceErrorCode.EVENT_SEQUENCE_NOT_MONOTONIC);
+                persistence.events().append(event(
+                        "event-3",
+                        PersistenceFixtures.TASK_ID,
+                        PersistenceFixtures.PLAN_ID,
+                        3,
+                        "correlation-a")),
+                PersistenceErrorCode.EVENT_SEQUENCE_NOT_MONOTONIC,
+                "event.sequence");
     }
 
     @Test
-    void eventDuplicateSequenceAndConflictingIdAreRejected() {
+    void eventCollisionReplayAuthorityAndIndependentPlansUseStablePriority() {
         InMemoryPersistence persistence = PersistenceFixtures.initializedPersistence();
-        EventEnvelope event = PersistenceFixtures.event("event-1", 1);
-        persistence.events().append(event);
+        EventEnvelope first = event(
+                "event-1",
+                PersistenceFixtures.TASK_ID,
+                PersistenceFixtures.PLAN_ID,
+                1,
+                "correlation-a");
+        persistence.events().append(first);
 
         assertFailure(
-                persistence.events().append(PersistenceFixtures.event("event-other", 1)),
-                PersistenceErrorCode.EVENT_SEQUENCE_NOT_MONOTONIC);
-        EventEnvelope conflictingId = PersistenceFixtures.event("event-1", 2);
+                persistence.events().append(event(
+                        "event-other",
+                        PersistenceFixtures.TASK_ID,
+                        PersistenceFixtures.PLAN_ID,
+                        1,
+                        "correlation-b")),
+                PersistenceErrorCode.EVENT_SEQUENCE_NOT_MONOTONIC,
+                "event.sequence");
+        persistence.events().append(event(
+                "event-4",
+                PersistenceFixtures.TASK_ID,
+                PersistenceFixtures.PLAN_ID,
+                4,
+                "correlation-b"));
+        assertEquals(
+                PersistenceOutcome.REPLAYED,
+                persistence.events().append(first).outcome());
+
+        EventEnvelope conflictingId = event(
+                "event-1",
+                new TaskFrameId("task-unknown"),
+                new PlanId("plan-unknown"),
+                2,
+                "correlation-conflict");
         assertFailure(
                 persistence.events().append(conflictingId),
-                PersistenceErrorCode.CONFLICTING_REPLAY);
-        assertEquals(event, persistence.events().find(new EventId("event-1")).value().orElseThrow());
+                PersistenceErrorCode.CONFLICTING_REPLAY,
+                "event.id");
+
+        assertFailure(
+                persistence.events().append(event(
+                        "event-unknown-plan",
+                        PersistenceFixtures.TASK_ID,
+                        new PlanId("plan-unknown"),
+                        1,
+                        "correlation-a")),
+                PersistenceErrorCode.NOT_FOUND,
+                "event.planId");
+        assertFailure(
+                persistence.events().append(event(
+                        "event-wrong-task",
+                        new TaskFrameId("task-wrong"),
+                        PersistenceFixtures.PLAN_ID,
+                        1,
+                        "correlation-a")),
+                PersistenceErrorCode.TASK_FRAME_MISMATCH,
+                "event.taskFrameId");
+
+        PlanId otherPlanId = new PlanId("plan-independent");
+        Plan otherPlan = new Plan(
+                otherPlanId,
+                PersistenceFixtures.TASK_ID,
+                List.of(PersistenceFixtures.revision1()));
+        assertEquals(
+                PersistenceOutcome.APPLIED,
+                persistence.plans().create(otherPlan).outcome());
+        assertEquals(
+                PersistenceOutcome.APPLIED,
+                persistence.events().append(event(
+                        "event-independent-1",
+                        PersistenceFixtures.TASK_ID,
+                        otherPlanId,
+                        1,
+                        "correlation-independent")).outcome());
+        assertEquals(first,
+                persistence.events().find(new EventId("event-1"))
+                        .value().orElseThrow());
     }
 
     @Test
@@ -191,12 +312,45 @@ class CoreRepositoryTest {
                 persistence.plans().find(PersistenceFixtures.PLAN_ID),
                 PersistenceErrorCode.NOT_FOUND);
         assertFailure(
-                persistence.events().read(PersistenceFixtures.PLAN_ID, " "),
-                PersistenceErrorCode.INVALID_ARGUMENT);
+                persistence.events().readAfter(null, -1),
+                PersistenceErrorCode.INVALID_ARGUMENT,
+                "planId");
         assertFailure(
-                persistence.events().read(PersistenceFixtures.PLAN_ID, "bad correlation"),
-                PersistenceErrorCode.INVALID_ARGUMENT);
+                persistence.events().readAfter(PersistenceFixtures.PLAN_ID, -1),
+                PersistenceErrorCode.INVALID_ARGUMENT,
+                "exclusiveSequence");
+        assertFailure(
+                persistence.events().readAfter(new PlanId("plan-missing"), -1),
+                PersistenceErrorCode.INVALID_ARGUMENT,
+                "exclusiveSequence");
+        assertFailure(
+                persistence.events().readAfter(new PlanId("plan-missing"), 0),
+                PersistenceErrorCode.NOT_FOUND,
+                "planId");
+        assertFailure(
+                persistence.events().append(null),
+                PersistenceErrorCode.INVALID_ARGUMENT,
+                "event");
         assertFailure(persistence.receipts().find(null), PersistenceErrorCode.INVALID_ARGUMENT);
+    }
+
+    private static EventEnvelope event(
+            String id,
+            TaskFrameId taskFrameId,
+            PlanId planId,
+            long sequence,
+            String correlationId) {
+        EventEnvelope template = PersistenceFixtures.event(id, sequence);
+        return new EventEnvelope(
+                template.id(),
+                taskFrameId,
+                planId,
+                sequence,
+                template.occurredAt(),
+                template.type(),
+                template.causationId(),
+                correlationId,
+                template.payload());
     }
 
     private static void assertFailure(
@@ -205,5 +359,13 @@ class CoreRepositoryTest {
         assertEquals(PersistenceOutcome.REJECTED, result.outcome());
         assertTrue(result.value().isEmpty());
         assertEquals(expectedCode, result.failure().orElseThrow().code());
+    }
+
+    private static void assertFailure(
+            PersistenceResult<?> result,
+            PersistenceErrorCode expectedCode,
+            String expectedPath) {
+        assertFailure(result, expectedCode);
+        assertEquals(expectedPath, result.failure().orElseThrow().path());
     }
 }

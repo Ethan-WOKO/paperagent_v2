@@ -6,6 +6,8 @@ import io.paperagent.v2.contracts.Plan;
 import io.paperagent.v2.contracts.PlanId;
 import io.paperagent.v2.contracts.TaskFrame;
 
+import java.util.Collections;
+
 final class InMemoryCheckpointRepository implements CheckpointRepository {
     private final InMemoryState state;
 
@@ -42,6 +44,16 @@ final class InMemoryCheckpointRepository implements CheckpointRepository {
             if (!CheckpointValidators.validate(checkpoint, taskFrame, plan, previous).isEmpty()) {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.CHECKPOINT_VALIDATION_FAILED, "checkpoint");
+            }
+            if (checkpoint.lastEventSequence() != 0
+                    && !state.eventStreams
+                            .getOrDefault(
+                                    checkpoint.planId(),
+                                    Collections.emptyNavigableMap())
+                            .containsKey(checkpoint.lastEventSequence())) {
+                return PersistenceResult.rejected(
+                        PersistenceErrorCode.CHECKPOINT_VALIDATION_FAILED,
+                        "checkpoint.lastEventSequence");
             }
             VersionedCheckpoint updated =
                     new VersionedCheckpoint(currentVersion + 1, checkpoint);

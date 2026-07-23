@@ -14,10 +14,9 @@ public final class EventValidators {
                     "event", "both previous and current events are required"));
         }
         if (!previous.taskFrameId().equals(current.taskFrameId())
-                || !previous.planId().equals(current.planId())
-                || !previous.correlationId().equals(current.correlationId())) {
+                || !previous.planId().equals(current.planId())) {
             return List.of(Contracts.violation(ViolationCode.INCONSISTENT_REFERENCE,
-                    "event", "event sequence members must share task, Plan, and correlation"));
+                    "event", "event sequence members must share task and Plan"));
         }
         if (current.sequence() <= previous.sequence()) {
             return List.of(Contracts.violation(ViolationCode.EVENT_SEQUENCE_REGRESSION,
