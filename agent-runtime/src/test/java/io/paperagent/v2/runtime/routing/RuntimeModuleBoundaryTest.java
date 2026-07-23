@@ -21,6 +21,11 @@ class RuntimeModuleBoundaryTest {
             "import io.paperagent.v2.persistence.PlanBootstrapRepository;",
             "import io.paperagent.v2.persistence.PersistenceResult;",
             "import io.paperagent.v2.persistence.PersistedPlanBootstrap;");
+    private static final Set<String> ALLOWED_EXECUTION_PERSISTENCE_IMPORTS = Set.of(
+            "import io.paperagent.v2.persistence.PersistenceResult;",
+            "import io.paperagent.v2.persistence.PersistedPlanBootstrap;",
+            "import io.paperagent.v2.persistence.PersistenceOutcome;",
+            "import io.paperagent.v2.persistence.PersistenceFailure;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             "io.paperagent.v2.workspace",
@@ -87,7 +92,8 @@ class RuntimeModuleBoundaryTest {
             for (Path sourcePath : paths
                     .filter(path -> path.toString().endsWith(".java"))
                     .toList()) {
-                boolean bootstrapSource = isBootstrapSource(sourceRoot, sourcePath);
+                Set<String> allowedPersistenceImports =
+                        allowedPersistenceImports(sourceRoot, sourcePath);
                 for (String line : Files.readAllLines(sourcePath)) {
                     String trimmed = line.trim();
                     if (trimmed.startsWith("import ")) {
@@ -97,9 +103,7 @@ class RuntimeModuleBoundaryTest {
                                                 "import io.paperagent.v2.contracts.")
                                         || trimmed.startsWith(
                                                 "import io.paperagent.v2.runtime.")
-                                        || bootstrapSource
-                                                && ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS
-                                                        .contains(trimmed),
+                                        || allowedPersistenceImports.contains(trimmed),
                                 () -> sourcePath + " crosses production boundary: " + trimmed);
                     }
                 }
@@ -114,10 +118,9 @@ class RuntimeModuleBoundaryTest {
             for (Path sourcePath : paths
                     .filter(path -> path.toString().endsWith(".java"))
                     .toList()) {
-                boolean bootstrapSource = isBootstrapSource(sourceRoot, sourcePath);
                 String source = Files.readString(sourcePath).toLowerCase();
                 for (String marker : FORBIDDEN_SOURCE_MARKERS) {
-                    if (marker.equals(PERSISTENCE_PREFIX) && bootstrapSource) {
+                    if (marker.equals(PERSISTENCE_PREFIX)) {
                         continue;
                     }
                     assertFalse(
@@ -128,9 +131,8 @@ class RuntimeModuleBoundaryTest {
                     if (line.contains(PERSISTENCE_PREFIX)) {
                         String trimmed = line.trim();
                         assertTrue(
-                                bootstrapSource
-                                        && ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS
-                                                .contains(trimmed),
+                                allowedPersistenceImports(sourceRoot, sourcePath)
+                                        .contains(trimmed),
                                 () -> sourcePath
                                         + " contains non-allowlisted persistence reference: "
                                         + trimmed);
@@ -140,10 +142,111 @@ class RuntimeModuleBoundaryTest {
         }
     }
 
+    @Test
+    void persistenceImportsArePackageExactAndFailClosed() {
+        Path sourceRoot = Path.of("src", "main", "java");
+        Path bootstrapSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "bootstrap",
+                "Bootstrap.java"));
+        Path executionSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "Gate.java"));
+        Path otherRuntimeSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "planning",
+                "Planner.java"));
+
+        for (String allowed : ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS) {
+            assertTrue(allowedPersistenceImports(sourceRoot, bootstrapSource)
+                    .contains(allowed));
+        }
+        for (String allowed : ALLOWED_EXECUTION_PERSISTENCE_IMPORTS) {
+            assertTrue(allowedPersistenceImports(sourceRoot, executionSource)
+                    .contains(allowed));
+        }
+
+        assertFalse(allowedPersistenceImports(sourceRoot, bootstrapSource)
+                .contains(
+                        "import io.paperagent.v2.persistence.PersistenceOutcome;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
+                .contains(
+                        "import io.paperagent.v2.persistence.PlanBootstrapRepository;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
+                .contains(
+                        "import io.paperagent.v2.persistence.InMemoryPersistence;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
+                .contains("import io.paperagent.v2.persistence.*;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
+                .contains(
+                        "import static io.paperagent.v2.persistence"
+                                + ".PersistenceOutcome.APPLIED;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
+                .contains(
+                        "return io.paperagent.v2.persistence"
+                                + ".PersistenceResult.applied(value);"));
+        assertTrue(
+                allowedPersistenceImports(sourceRoot, otherRuntimeSource)
+                        .isEmpty());
+    }
+
+    @Test
+    void executionDoesNotUseSuccessfulShortcut() throws Exception {
+        Path module = moduleDirectory();
+        for (Path sourceRoot : List.of(
+                module.resolve("src/main/java"),
+                module.resolve("src/test/java"))) {
+            Path executionRoot = sourceRoot.resolve(
+                    Path.of("io", "paperagent", "v2", "runtime", "execution"));
+            if (!Files.isDirectory(executionRoot)) {
+                continue;
+            }
+            try (var paths = Files.walk(executionRoot)) {
+                for (Path sourcePath : paths
+                        .filter(path -> path.toString().endsWith(".java"))
+                        .toList()) {
+                    String source = Files.readString(sourcePath);
+                    assertFalse(
+                            source.contains(".successful("),
+                            () -> sourcePath
+                                    + " must classify persistence outcomes explicitly");
+                }
+            }
+        }
+    }
+
     private static boolean isBootstrapSource(Path sourceRoot, Path sourcePath) {
         Path relative = sourceRoot.relativize(sourcePath);
         return relative.startsWith(
                 Path.of("io", "paperagent", "v2", "runtime", "bootstrap"));
+    }
+
+    private static boolean isExecutionSource(Path sourceRoot, Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(
+                Path.of("io", "paperagent", "v2", "runtime", "execution"));
+    }
+
+    private static Set<String> allowedPersistenceImports(
+            Path sourceRoot,
+            Path sourcePath) {
+        if (isBootstrapSource(sourceRoot, sourcePath)) {
+            return ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS;
+        }
+        if (isExecutionSource(sourceRoot, sourcePath)) {
+            return ALLOWED_EXECUTION_PERSISTENCE_IMPORTS;
+        }
+        return Set.of();
     }
 
     private static Path moduleDirectory() {
