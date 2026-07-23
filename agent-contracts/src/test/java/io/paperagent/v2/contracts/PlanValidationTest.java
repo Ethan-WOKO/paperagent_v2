@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -109,6 +110,9 @@ class PlanValidationTest {
         ContractViolationException exception =
                 ContractFixtures.violation(() -> ContractFixtures.plan(first, second));
         assertEquals(ViolationCode.COMPLETED_FACT_REMOVED, exception.primaryCode());
+        assertEquals(
+                "planRevision.completedFacts." + STEP_1.value(),
+                exception.violations().get(0).path());
     }
 
     @Test
@@ -129,6 +133,9 @@ class PlanValidationTest {
         ContractViolationException exception =
                 ContractFixtures.violation(() -> ContractFixtures.plan(first, second));
         assertEquals(ViolationCode.COMPLETED_FACT_REDEFINED, exception.primaryCode());
+        assertEquals(
+                "planRevision.completedFacts." + STEP_1.value(),
+                exception.violations().get(0).path());
     }
 
     @Test
@@ -143,6 +150,175 @@ class PlanValidationTest {
         List<ContractViolation> violations =
                 PlanValidators.validateCompletedFactPreservation(first, second);
         assertEquals(ViolationCode.COMPLETED_FACT_REDEFINED, violations.get(0).code());
+        assertEquals(
+                "planRevision.completedFacts." + STEP_1.value(),
+                violations.get(0).path());
+    }
+
+    @Test
+    void acceptsFirstFactForAnUnchangedPriorStepViaValidatorAndPlan() {
+        PlanRevision first = revision(
+                1,
+                Optional.empty(),
+                List.of(
+                        ContractFixtures.step(STEP_1, Set.of()),
+                        ContractFixtures.step(STEP_2, Set.of(STEP_1))),
+                Map.of());
+        CompletionFact newlyCompleted =
+                new CompletionFact(STEP_2, "outcome-v2", T0.plusSeconds(2), List.of());
+        PlanRevision second = revision(
+                2,
+                Optional.of(first.id()),
+                first.steps(),
+                Map.of(STEP_2, newlyCompleted));
+
+        assertEquals(
+                List.of(),
+                PlanValidators.validateCompletedFactPreservation(first, second));
+        Plan plan = ContractFixtures.plan(first, second);
+        assertEquals(newlyCompleted, plan.latestRevision().completedFacts().get(STEP_2));
+    }
+
+    @Test
+    void rejectsFirstFactForStepIntroducedInCurrentRevisionViaValidatorAndPlan() {
+        PlanStep priorStep = ContractFixtures.step(STEP_1, Set.of());
+        PlanRevision first = revision(
+                1,
+                Optional.empty(),
+                List.of(priorStep),
+                Map.of());
+        PlanStep newlyIntroduced = ContractFixtures.step(STEP_2, Set.of(STEP_1));
+        PlanRevision second = revision(
+                2,
+                Optional.of(first.id()),
+                List.of(priorStep, newlyIntroduced),
+                Map.of(STEP_2, fact(STEP_2, "unexecuted-new-step")));
+        String path = "planRevision.completedFacts." + STEP_2.value();
+
+        assertSingleViolation(
+                PlanValidators.validateCompletedFactPreservation(first, second),
+                ViolationCode.INCONSISTENT_REFERENCE,
+                path);
+        assertPlanViolation(
+                first,
+                second,
+                ViolationCode.INCONSISTENT_REFERENCE,
+                path);
+    }
+
+    @Test
+    void rejectsFirstFactForRewrittenPriorStepViaValidatorAndPlan() {
+        PlanStep priorStep = ContractFixtures.step(STEP_1, Set.of());
+        PlanRevision first = revision(
+                1,
+                Optional.empty(),
+                List.of(priorStep),
+                Map.of());
+        PlanStep rewritten = new PlanStep(
+                STEP_1,
+                "rewritten before first fact",
+                priorStep.expectedOutcome(),
+                priorStep.dependencies(),
+                priorStep.completionCriteria(),
+                priorStep.executionHints());
+        PlanRevision second = revision(
+                2,
+                Optional.of(first.id()),
+                List.of(rewritten),
+                Map.of(STEP_1, fact(STEP_1, "rewritten-new-fact")));
+        String path = "planRevision.completedFacts." + STEP_1.value();
+
+        assertSingleViolation(
+                PlanValidators.validateCompletedFactPreservation(first, second),
+                ViolationCode.COMPLETED_FACT_REDEFINED,
+                path);
+        assertPlanViolation(
+                first,
+                second,
+                ViolationCode.COMPLETED_FACT_REDEFINED,
+                path);
+    }
+
+    @Test
+    void factHistoryViolationsAreGloballySortedAcrossMapInsertionOrders() {
+        PlanStepId stepA = new PlanStepId("step-a");
+        PlanStepId stepM = new PlanStepId("step-m");
+        PlanStepId stepY = new PlanStepId("step-y");
+        PlanStepId stepZ = new PlanStepId("step-z");
+        PlanStep priorM = ContractFixtures.step(stepM, Set.of());
+        PlanStep priorZ = ContractFixtures.step(stepZ, Set.of());
+        PlanStep newA = ContractFixtures.step(stepA, Set.of());
+        PlanStep newY = ContractFixtures.step(stepY, Set.of());
+
+        LinkedHashMap<PlanStepId, CompletionFact> previousFactsForward = new LinkedHashMap<>();
+        previousFactsForward.put(stepM, fact(stepM, "prior-m"));
+        previousFactsForward.put(stepZ, fact(stepZ, "prior-z"));
+        LinkedHashMap<PlanStepId, CompletionFact> previousFactsReverse = new LinkedHashMap<>();
+        previousFactsReverse.put(stepZ, fact(stepZ, "prior-z"));
+        previousFactsReverse.put(stepM, fact(stepM, "prior-m"));
+        LinkedHashMap<PlanStepId, CompletionFact> currentFactsReverse = new LinkedHashMap<>();
+        currentFactsReverse.put(stepY, fact(stepY, "new-y"));
+        currentFactsReverse.put(stepA, fact(stepA, "new-a"));
+        LinkedHashMap<PlanStepId, CompletionFact> currentFactsForward = new LinkedHashMap<>();
+        currentFactsForward.put(stepA, fact(stepA, "new-a"));
+        currentFactsForward.put(stepY, fact(stepY, "new-y"));
+
+        PlanRevision previousForward = revision(
+                1,
+                Optional.empty(),
+                List.of(priorM, priorZ),
+                previousFactsForward);
+        PlanRevision previousReverse = revision(
+                1,
+                Optional.empty(),
+                List.of(priorM, priorZ),
+                previousFactsReverse);
+        List<PlanStep> currentSteps = List.of(newA, priorM, newY, priorZ);
+        PlanRevision currentReverse = revision(
+                2,
+                Optional.of(previousForward.id()),
+                currentSteps,
+                currentFactsReverse);
+        PlanRevision currentForward = revision(
+                2,
+                Optional.of(previousReverse.id()),
+                currentSteps,
+                currentFactsForward);
+
+        List<ContractViolation> reverseOrderViolations =
+                PlanValidators.validateCompletedFactPreservation(
+                        previousForward,
+                        currentReverse);
+        List<ContractViolation> forwardOrderViolations =
+                PlanValidators.validateCompletedFactPreservation(
+                        previousReverse,
+                        currentForward);
+
+        assertEquals(reverseOrderViolations, forwardOrderViolations);
+        assertEquals(
+                List.of(
+                        "planRevision.completedFacts.step-a",
+                        "planRevision.completedFacts.step-m",
+                        "planRevision.completedFacts.step-y",
+                        "planRevision.completedFacts.step-z"),
+                reverseOrderViolations.stream().map(ContractViolation::path).toList());
+        assertEquals(
+                List.of(
+                        ViolationCode.INCONSISTENT_REFERENCE,
+                        ViolationCode.COMPLETED_FACT_REMOVED,
+                        ViolationCode.INCONSISTENT_REFERENCE,
+                        ViolationCode.COMPLETED_FACT_REMOVED),
+                reverseOrderViolations.stream().map(ContractViolation::code).toList());
+        assertPlanViolation(
+                previousForward,
+                currentReverse,
+                ViolationCode.INCONSISTENT_REFERENCE,
+                "planRevision.completedFacts.step-a");
+        assertPlanViolation(
+                previousReverse,
+                currentForward,
+                ViolationCode.INCONSISTENT_REFERENCE,
+                "planRevision.completedFacts.step-a");
     }
 
     @Test
@@ -191,6 +367,30 @@ class PlanValidationTest {
                 Optional.empty(),
                 List.of(ContractFixtures.step(STEP_1, Set.of()), ContractFixtures.step(STEP_2, Set.of(STEP_1))),
                 Map.of(STEP_1, new CompletionFact(STEP_1, "outcome-v1", T0, List.of())));
+    }
+
+    private static CompletionFact fact(PlanStepId stepId, String outcome) {
+        return new CompletionFact(stepId, outcome, T0.plusSeconds(2), List.of());
+    }
+
+    private static void assertSingleViolation(
+            List<ContractViolation> violations,
+            ViolationCode expectedCode,
+            String expectedPath) {
+        assertEquals(1, violations.size());
+        assertEquals(expectedCode, violations.get(0).code());
+        assertEquals(expectedPath, violations.get(0).path());
+    }
+
+    private static void assertPlanViolation(
+            PlanRevision previous,
+            PlanRevision current,
+            ViolationCode expectedCode,
+            String expectedPath) {
+        ContractViolationException exception =
+                ContractFixtures.violation(() -> ContractFixtures.plan(previous, current));
+        assertEquals(expectedCode, exception.primaryCode());
+        assertEquals(expectedPath, exception.violations().get(0).path());
     }
 
     private static PlanRevision revision(
