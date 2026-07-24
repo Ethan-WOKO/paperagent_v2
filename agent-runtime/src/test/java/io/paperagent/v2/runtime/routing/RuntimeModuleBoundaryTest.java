@@ -45,6 +45,32 @@ class RuntimeModuleBoundaryTest {
             ALLOWED_RECOVERY_MATERIALIZATION_PERSISTENCE_IMPORTS = Set.of(
                     "import io.paperagent.v2.persistence"
                             + ".PersistedExecutionStartReady;");
+    private static final Set<String>
+            ALLOWED_RECOVERY_COMPOSITION_PERSISTENCE_IMPORTS = Set.of(
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRecoveryRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRecoverySnapshot;",
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRequest;",
+                    "import io.paperagent.v2.persistence.LeaseRecord;",
+                    "import io.paperagent.v2.persistence.LeaseRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStart;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStartReady;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStartCommitted;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceErrorCode;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceFailure;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceOutcome;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceResult;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             "io.paperagent.v2.workspace",
@@ -195,6 +221,15 @@ class RuntimeModuleBoundaryTest {
                 "recovery",
                 "materialization",
                 "Materializer.java"));
+        Path recoveryCompositionSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "recovery",
+                "composition",
+                "Recoverer.java"));
         Path otherRuntimeSource = sourceRoot.resolve(Path.of(
                 "io",
                 "paperagent",
@@ -223,6 +258,11 @@ class RuntimeModuleBoundaryTest {
                 allowedPersistenceImports(
                         sourceRoot,
                         recoveryMaterializationSource));
+        assertEquals(
+                ALLOWED_RECOVERY_COMPOSITION_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(
+                        sourceRoot,
+                        recoveryCompositionSource));
 
         assertFalse(allowedPersistenceImports(sourceRoot, bootstrapSource)
                 .contains(
@@ -252,6 +292,13 @@ class RuntimeModuleBoundaryTest {
                         .contains(
                                 "import io.paperagent.v2.persistence"
                                         + ".PersistedExecutionStartCommitted;"));
+        assertFalse(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        recoveryCompositionSource)
+                        .contains(
+                                "import io.paperagent.v2.persistence"
+                                        + ".InMemoryPersistence;"));
         assertFalse(
                 allowedPersistenceImports(sourceRoot, executionSource)
                         .contains(
@@ -336,11 +383,28 @@ class RuntimeModuleBoundaryTest {
                 "materialization"));
     }
 
+    private static boolean isRecoveryCompositionSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "recovery",
+                "composition"));
+    }
+
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
         if (isBootstrapSource(sourceRoot, sourcePath)) {
             return ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS;
+        }
+        if (isRecoveryCompositionSource(sourceRoot, sourcePath)) {
+            return ALLOWED_RECOVERY_COMPOSITION_PERSISTENCE_IMPORTS;
         }
         if (isRecoveryMaterializationSource(sourceRoot, sourcePath)) {
             return ALLOWED_RECOVERY_MATERIALIZATION_PERSISTENCE_IMPORTS;
