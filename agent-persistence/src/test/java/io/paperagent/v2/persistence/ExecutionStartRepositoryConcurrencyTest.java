@@ -261,8 +261,8 @@ class ExecutionStartRepositoryConcurrencyTest {
             if (startResult.outcome() == PersistenceOutcome.APPLIED) {
                 assertFailure(
                         saveResult,
-                        PersistenceErrorCode.STALE_VERSION,
-                        "expectedVersion");
+                        PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                        "checkpoint.planId");
                 assertCommitted(setup.persistence(), setup.request());
             } else {
                 assertFailure(
@@ -305,22 +305,32 @@ class ExecutionStartRepositoryConcurrencyTest {
                     start.get(5, TimeUnit.SECONDS);
             PersistenceResult<Plan> appendResult =
                     append.get(5, TimeUnit.SECONDS);
-            assertEquals(PersistenceOutcome.APPLIED, appendResult.outcome());
             if (startResult.outcome() == PersistenceOutcome.APPLIED) {
+                assertFailure(
+                        appendResult,
+                        PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                        "planId");
                 assertCommitted(setup.persistence(), setup.request());
+                assertEquals(
+                        1,
+                        setup.persistence().plans()
+                                .find(setup.plan().id())
+                                .value().orElseThrow()
+                                .latestRevision().number());
             } else {
+                assertEquals(PersistenceOutcome.APPLIED, appendResult.outcome());
                 assertFailure(
                         startResult,
                         PersistenceErrorCode.CHECKPOINT_VALIDATION_FAILED,
                         "request.startedCheckpoint");
                 assertUnstarted(setup);
+                assertEquals(
+                        2,
+                        setup.persistence().plans()
+                                .find(setup.plan().id())
+                                .value().orElseThrow()
+                                .latestRevision().number());
             }
-            assertEquals(
-                    2,
-                    setup.persistence().plans()
-                            .find(setup.plan().id())
-                            .value().orElseThrow()
-                            .latestRevision().number());
         } finally {
             shutdown(executor);
         }
@@ -397,8 +407,8 @@ class ExecutionStartRepositoryConcurrencyTest {
         assertFailure(
                 startFirst.persistence().checkpoints()
                         .save(1, startFirstCandidate),
-                PersistenceErrorCode.STALE_VERSION,
-                "expectedVersion");
+                PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                "checkpoint.planId");
         assertCommitted(startFirst.persistence(), startFirst.request());
 
         Setup contenderFirst = setup("checkpoint-contender-first", 30);
@@ -430,17 +440,17 @@ class ExecutionStartRepositoryConcurrencyTest {
                 PersistenceOutcome.APPLIED,
                 startFirst.persistence().executionStarts()
                         .start(startFirst.request()).outcome());
-        assertEquals(
-                PersistenceOutcome.APPLIED,
+        assertFailure(
                 startFirst.persistence().plans()
                         .appendRevision(
                                 startFirst.plan().id(),
                                 1,
-                                startFirstRevision)
-                        .outcome());
+                                startFirstRevision),
+                PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                "planId");
         assertCommitted(startFirst.persistence(), startFirst.request());
         assertEquals(
-                2,
+                1,
                 startFirst.persistence().plans()
                         .find(startFirst.plan().id())
                         .value().orElseThrow()

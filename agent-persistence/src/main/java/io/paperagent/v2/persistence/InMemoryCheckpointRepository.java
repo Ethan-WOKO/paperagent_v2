@@ -26,6 +26,11 @@ final class InMemoryCheckpointRepository implements CheckpointRepository {
             return PersistenceChecks.invalid("checkpoint");
         }
         synchronized (state.monitor) {
+            if (state.executionStarts.containsKey(checkpoint.planId())) {
+                return PersistenceResult.rejected(
+                        PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                        "checkpoint.planId");
+            }
             VersionedCheckpoint current = state.checkpoints.get(checkpoint.planId());
             long currentVersion = current == null ? 0 : current.version();
             if (expectedVersion != currentVersion) {

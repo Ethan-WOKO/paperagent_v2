@@ -372,33 +372,16 @@ class ExecutionStartRecoveryRepositoryTest {
     }
 
     @Test
-    void validPlanEventAndCheckpointProgressAreAdvanced() {
-        Harness planAdvanced = bootstrappedHarness();
-        start(planAdvanced, TOKEN, "start-plan");
-        requireApplied(planAdvanced.plans().appendRevision(
-                PersistenceFixtures.PLAN_ID,
-                1,
-                PersistenceFixtures.revision2(
-                        "revision-2", "after start")));
-        assertAdvanced(planAdvanced.recovery().inspect(PersistenceFixtures.PLAN_ID));
-
-        Harness gapAdvanced = bootstrappedHarness();
-        start(gapAdvanced, TOKEN, "start-gap");
-        requireApplied(gapAdvanced.events().append(
-                PersistenceFixtures.event("event-3", 3)));
-        assertAdvanced(gapAdvanced.recovery().inspect(PersistenceFixtures.PLAN_ID));
-
+    void validFencedActivationProgressIsAdvanced() {
         Harness checkpointAdvanced = bootstrappedHarness();
-        start(checkpointAdvanced, TOKEN, "start-checkpoint");
-        requireApplied(checkpointAdvanced.events().append(
-                PersistenceFixtures.event("event-3", 3)));
-        requireApplied(checkpointAdvanced.receipts().append(
-                PersistenceFixtures.receipt("receipt-1", "tool-1")));
-        Checkpoint progressed = progressedCheckpoint(
-                PersistenceFixtures.plan(),
-                3,
-                List.of(new ReceiptId("receipt-1")));
-        requireApplied(checkpointAdvanced.checkpoints().save(2, progressed));
+        PersistedExecutionStart started =
+                start(checkpointAdvanced, TOKEN, "start-checkpoint");
+        requireApplied(checkpointAdvanced.activations().activate(
+                PersistenceFixtures.stepActivationRequest(
+                        PersistenceFixtures.plan(),
+                        TOKEN,
+                        started.fencingToken(),
+                        "activation-3")));
         assertAdvanced(checkpointAdvanced.recovery()
                 .inspect(PersistenceFixtures.PLAN_ID));
     }
@@ -424,18 +407,6 @@ class ExecutionStartRecoveryRepositoryTest {
         assertPartial(missingCheckpointReceipt.recovery()
                 .inspect(PersistenceFixtures.PLAN_ID));
 
-        Harness missingFactReceipt = bootstrappedHarness();
-        start(missingFactReceipt, TOKEN, "start-missing-fact");
-        PlanRevision withFact = revisionWithFact(new ReceiptId("receipt-fact"));
-        requireApplied(missingFactReceipt.plans().appendRevision(
-                PersistenceFixtures.PLAN_ID, 1, withFact));
-        assertPartial(missingFactReceipt.recovery()
-                .inspect(PersistenceFixtures.PLAN_ID));
-
-        requireApplied(missingFactReceipt.receipts().append(
-                PersistenceFixtures.receipt("receipt-fact", "tool-fact")));
-        assertAdvanced(missingFactReceipt.recovery()
-                .inspect(PersistenceFixtures.PLAN_ID));
     }
 
     @Test
@@ -729,10 +700,13 @@ class ExecutionStartRecoveryRepositoryTest {
         Harness harness = bootstrappedHarness();
         PersistedExecutionStart started =
                 start(harness, TOKEN, "start-public");
-        Plan advanced = requireApplied(harness.plans().appendRevision(
+        Plan advanced = new Plan(
                 PersistenceFixtures.PLAN_ID,
-                1,
-                PersistenceFixtures.revision2("revision-2", "advanced")));
+                PersistenceFixtures.TASK_ID,
+                List.of(
+                        PersistenceFixtures.revision1(),
+                        PersistenceFixtures.revision2(
+                                "revision-2", "advanced")));
         PersistedPlanBootstrap bootstrap =
                 harness.state().planBootstraps.get(PersistenceFixtures.PLAN_ID);
         assertThrows(
@@ -903,6 +877,7 @@ class ExecutionStartRecoveryRepositoryTest {
                 new InMemoryPlanBootstrapRepository(state),
                 new InMemoryLeaseRepository(state),
                 new InMemoryExecutionStartRepository(state),
+                new InMemoryStepActivationRepository(state),
                 new InMemoryExecutionStartRecoveryRepository(state));
     }
 
@@ -953,6 +928,7 @@ class ExecutionStartRecoveryRepositoryTest {
             PlanBootstrapRepository bootstraps,
             LeaseRepository leases,
             ExecutionStartRepository executionStarts,
+            StepActivationRepository activations,
             ExecutionStartRecoveryRepository recovery) {
     }
 }

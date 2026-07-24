@@ -8,6 +8,7 @@ import io.paperagent.v2.persistence.ExecutionStartRequest;
 import io.paperagent.v2.persistence.InMemoryPersistence;
 import io.paperagent.v2.persistence.PersistedExecutionStart;
 import io.paperagent.v2.persistence.PersistedPlanBootstrap;
+import io.paperagent.v2.persistence.PersistenceErrorCode;
 import io.paperagent.v2.persistence.PersistenceOutcome;
 import io.paperagent.v2.persistence.PersistenceResult;
 import io.paperagent.v2.runtime.execution.DeterministicExecutionStartMaterializer;
@@ -342,16 +343,18 @@ class FreshExecutionStartIntegrationTest {
             var persisted =
                     persistence.executionStarts().start(request);
             assertEquals(PersistenceOutcome.APPLIED, persisted.outcome());
+            PersistenceResult<Plan> guarded =
+                    persistence.plans().appendRevision(
+                            scenario.bootstrap().plan().id(),
+                            1,
+                            nextRevision(
+                                    scenario.bootstrap().plan(),
+                                    "after-start"));
+            assertEquals(PersistenceOutcome.REJECTED, guarded.outcome());
             assertEquals(
-                    PersistenceOutcome.APPLIED,
-                    persistence.plans()
-                            .appendRevision(
-                                    scenario.bootstrap().plan().id(),
-                                    1,
-                                    nextRevision(
-                                            scenario.bootstrap().plan(),
-                                            "after-start"))
-                            .outcome());
+                    PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                    guarded.failure().orElseThrow().code());
+            assertEquals("planId", guarded.failure().orElseThrow().path());
             return persisted;
         };
 
@@ -378,7 +381,7 @@ class FreshExecutionStartIntegrationTest {
                         .find(scenario.bootstrap().plan().id())
                         .value().orElseThrow());
         assertEquals(
-                2,
+                1,
                 persistence.plans()
                         .find(scenario.bootstrap().plan().id())
                         .value().orElseThrow()

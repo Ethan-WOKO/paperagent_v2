@@ -30,6 +30,11 @@ final class InMemoryEventRepository implements EventRepository {
                         : PersistenceResult.rejected(
                                 PersistenceErrorCode.CONFLICTING_REPLAY, "event.id");
             }
+            if (state.executionStarts.containsKey(event.planId())) {
+                return PersistenceResult.rejected(
+                        PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                        "event.planId");
+            }
             Plan plan = state.plans.get(event.planId());
             if (plan == null) {
                 return PersistenceChecks.notFound("event.planId");

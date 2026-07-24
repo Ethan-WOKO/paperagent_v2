@@ -1,6 +1,11 @@
 package io.paperagent.v2.runtime.execution.recovery.composition;
 
+import io.paperagent.v2.contracts.Checkpoint;
+import io.paperagent.v2.contracts.EventEnvelope;
+import io.paperagent.v2.contracts.EventId;
 import io.paperagent.v2.contracts.PlanId;
+import io.paperagent.v2.contracts.PlanStepId;
+import io.paperagent.v2.contracts.StepExecutionState;
 import io.paperagent.v2.persistence.InMemoryPersistence;
 import io.paperagent.v2.persistence.ExecutionStartRepository;
 import io.paperagent.v2.persistence.ExecutionStartRequest;
@@ -12,6 +17,7 @@ import io.paperagent.v2.persistence.PersistedPlanBootstrap;
 import io.paperagent.v2.persistence.PersistenceErrorCode;
 import io.paperagent.v2.persistence.PersistenceOutcome;
 import io.paperagent.v2.persistence.PersistenceResult;
+import io.paperagent.v2.persistence.StepActivationRequest;
 import io.paperagent.v2.runtime.execution.MaterializedExecutionStart;
 import io.paperagent.v2.runtime.execution.recovery.materialization.DeterministicRecoveryReadyExecutionStartMaterializer;
 import io.paperagent.v2.runtime.execution.recovery.materialization.RecoveryReadyExecutionStartMaterializationRequest;
@@ -24,6 +30,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -218,7 +225,7 @@ class ExecutionStartRecoveryConcurrencyTest {
     }
 
     @Test
-    void successorRevisionAfterOwnStartBeforeThirdInspectIsAdvanced()
+    void successorActivationAfterOwnStartBeforeThirdInspectIsAdvanced()
             throws Exception {
         InMemoryPersistence persistence = persistence();
         PersistedPlanBootstrap bootstrap = persistBootstrap(
@@ -228,10 +235,9 @@ class ExecutionStartRecoveryConcurrencyTest {
                         bootstrap, bootstrap.plan());
         FreshExecutionStartAttempt recoveryAttempt =
                 attempt("successor-after-start");
-        var appendingStarts = new AppendRevisionAfterStartRepository(
+        var appendingStarts = new ActivateStepAfterStartRepository(
                 persistence.executionStarts(),
-                persistence,
-                revisedReady(ready, "successor-after-start"));
+                persistence);
         var recoverer = new DefaultExecutionStartRecoverer(
                 persistence.executionStartRecovery(),
                 new DeterministicRecoveryReadyExecutionStartMaterializer(),
@@ -255,7 +261,7 @@ class ExecutionStartRecoveryConcurrencyTest {
         assertEquals(PersistenceOutcome.APPLIED,
                 appendingStarts.result.get().outcome());
         assertEquals(
-                1,
+                2,
                 persistence.events().readAfter(
                         bootstrap.plan().id(), 0)
                         .value().orElseThrow().size());
@@ -807,23 +813,20 @@ class ExecutionStartRecoveryConcurrencyTest {
         }
     }
 
-    private static final class AppendRevisionAfterStartRepository
+    private static final class ActivateStepAfterStartRepository
             implements ExecutionStartRepository {
         private final ExecutionStartRepository delegate;
         private final InMemoryPersistence persistence;
-        private final PersistedExecutionStartReady revised;
         private final AtomicInteger calls = new AtomicInteger();
         private final AtomicReference<
                 PersistenceResult<PersistedExecutionStart>> result =
                 new AtomicReference<>();
 
-        private AppendRevisionAfterStartRepository(
+        private ActivateStepAfterStartRepository(
                 ExecutionStartRepository delegate,
-                InMemoryPersistence persistence,
-                PersistedExecutionStartReady revised) {
+                InMemoryPersistence persistence) {
             this.delegate = delegate;
             this.persistence = persistence;
-            this.revised = revised;
         }
 
         @Override
@@ -833,7 +836,55 @@ class ExecutionStartRecoveryConcurrencyTest {
             PersistenceResult<PersistedExecutionStart> observed =
                     delegate.start(request);
             result.set(observed);
-            appendRevision(persistence, revised);
+            PersistedExecutionStart start = observed.value().orElseThrow();
+            Checkpoint source = start.startedCheckpoint().checkpoint();
+            PlanStepId target = persistence.plans()
+                    .find(request.planId())
+                    .value().orElseThrow()
+                    .latestRevision()
+                    .steps().stream()
+                    .filter(step -> step.dependencies().isEmpty())
+                    .findFirst().orElseThrow()
+                    .id();
+            EventEnvelope event = new EventEnvelope(
+                    new EventId("activation-after-start"),
+                    source.taskFrameId(),
+                    source.planId(),
+                    3,
+                    source.createdAt().plusSeconds(1),
+                    request.startEvent().type(),
+                    Optional.of(request.startEvent().id()),
+                    request.startEvent().correlationId(),
+                    request.startEvent().payload());
+            var states = new LinkedHashMap<>(source.stepStates());
+            states.put(target, StepExecutionState.ACTIVE);
+            Checkpoint activated = new Checkpoint(
+                    source.taskFrameId(),
+                    source.planId(),
+                    source.revisionId(),
+                    source.revisionNumber(),
+                    event.sequence(),
+                    source.planState(),
+                    states,
+                    source.receiptReferences(),
+                    source.createdAt().plusSeconds(1));
+            PersistenceResult<?> activation =
+                    persistence.stepActivations().activate(
+                            new StepActivationRequest(
+                                    request.planId(),
+                                    request.leaseToken(),
+                                    start.fencingToken(),
+                                    source.revisionId(),
+                                    source.revisionNumber(),
+                                    start.startedCheckpoint().version(),
+                                    request.startEvent().sequence(),
+                                    target,
+                                    event,
+                                    activated));
+            if (activation.outcome() != PersistenceOutcome.APPLIED) {
+                throw new AssertionError(
+                        "activation failed: " + activation.outcome());
+            }
             return observed;
         }
     }
