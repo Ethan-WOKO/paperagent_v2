@@ -11,6 +11,7 @@ public final class InMemoryPersistence {
     private final CheckpointRepository checkpoints;
     private final PlanBootstrapRepository planBootstraps;
     private final LeaseRepository leases;
+    private final ExecutionStartRepository executionStarts;
     private final IdempotencyRepository idempotency;
 
     public InMemoryPersistence() {
@@ -27,6 +28,7 @@ public final class InMemoryPersistence {
         checkpoints = new InMemoryCheckpointRepository(state);
         planBootstraps = new InMemoryPlanBootstrapRepository(state);
         leases = new InMemoryLeaseRepository(state);
+        executionStarts = new InMemoryExecutionStartRepository(state);
         idempotency = new InMemoryIdempotencyRepository(state);
     }
 
@@ -56,6 +58,10 @@ public final class InMemoryPersistence {
 
     public LeaseRepository leases() {
         return leases;
+    }
+
+    public ExecutionStartRepository executionStarts() {
+        return executionStarts;
     }
 
     public IdempotencyRepository idempotency() {

@@ -30,6 +30,7 @@ final class InMemoryState {
     final Map<ReceiptId, ExecutionReceipt> receipts = new LinkedHashMap<>();
     final Map<PlanId, VersionedCheckpoint> checkpoints = new LinkedHashMap<>();
     final Map<PlanId, PersistedPlanBootstrap> planBootstraps = new LinkedHashMap<>();
+    final Map<PlanId, ExecutionStartMarker> executionStarts = new LinkedHashMap<>();
     final Map<PlanId, LeaseRecord> leases = new HashMap<>();
     final Map<PlanId, Long> fencingTokens = new HashMap<>();
     final Set<String> usedLeaseTokens = new HashSet<>();
@@ -48,5 +49,10 @@ final class InMemoryState {
                         : leaseTimeHighWater;
         leaseTimeHighWater = effectiveNow;
         return effectiveNow;
+    }
+
+    record ExecutionStartMarker(
+            ExecutionStartRequest request,
+            PersistedExecutionStart result) {
     }
 }

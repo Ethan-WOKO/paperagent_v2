@@ -32,6 +32,7 @@ class PublicBoundaryTest {
                 CheckpointRepository.class,
                 PlanBootstrapRepository.class,
                 LeaseRepository.class,
+                ExecutionStartRepository.class,
                 IdempotencyRepository.class);
 
         for (Class<?> port : ports) {
@@ -59,6 +60,7 @@ class PublicBoundaryTest {
                 InMemoryCheckpointRepository.class,
                 InMemoryPlanBootstrapRepository.class,
                 InMemoryLeaseRepository.class,
+                InMemoryExecutionStartRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
@@ -133,6 +135,67 @@ class PublicBoundaryTest {
         assertEquals(
                 Set.of(List.of(), List.of(Clock.class)),
                 signatures);
+    }
+
+    @Test
+    void executionStartSurfaceIsExactAndDoesNotExposeLeaseTokenInResult()
+            throws Exception {
+        Method start = Arrays.stream(ExecutionStartRepository.class.getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()))
+                .get("start");
+        assertEquals(1, ExecutionStartRepository.class.getDeclaredMethods().length);
+        assertMethod(
+                start,
+                PersistenceResult.class,
+                ExecutionStartRequest.class);
+
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "startEvent",
+                        "startedCheckpoint"),
+                Arrays.stream(ExecutionStartRequest.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        EventEnvelope.class,
+                        io.paperagent.v2.contracts.Checkpoint.class),
+                Arrays.stream(ExecutionStartRequest.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseOwnerId",
+                        "fencingToken",
+                        "startEvent",
+                        "startedCheckpoint"),
+                Arrays.stream(PersistedExecutionStart.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        EventEnvelope.class,
+                        VersionedCheckpoint.class),
+                Arrays.stream(PersistedExecutionStart.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                ExecutionStartRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("executionStarts")
+                        .getReturnType());
     }
 
     private static void assertMethod(

@@ -34,9 +34,15 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 final class PersistenceFixtures {
     static final Instant T0 = Instant.parse("2026-07-24T00:00:00Z");
@@ -117,11 +123,32 @@ final class PersistenceFixtures {
         return new Plan(planId, TASK_ID, List.of(revision1()));
     }
 
+    static Plan plan(PlanId planId, TaskFrameId taskFrameId, String suffix) {
+        PlanRevision revision = new PlanRevision(
+                new PlanRevisionId("revision-" + suffix),
+                taskFrameId,
+                1,
+                Optional.empty(),
+                "initial " + suffix,
+                T0,
+                List.of(step(STEP_1, Set.of()), step(STEP_2, Set.of(STEP_1))),
+                Map.of());
+        return new Plan(planId, taskFrameId, List.of(revision));
+    }
+
     static EventEnvelope event(String id, long sequence) {
+        return event(id, TASK_ID, PLAN_ID, sequence);
+    }
+
+    static EventEnvelope event(
+            String id,
+            TaskFrameId taskFrameId,
+            PlanId planId,
+            long sequence) {
         return new EventEnvelope(
                 new EventId(id),
-                TASK_ID,
-                PLAN_ID,
+                taskFrameId,
+                planId,
                 sequence,
                 T0.plusSeconds(sequence),
                 new EventType("step-progress"),
@@ -165,6 +192,36 @@ final class PersistenceFixtures {
                 createdAt);
     }
 
+    static Checkpoint initialCheckpoint(Plan plan) {
+        return executionCheckpoint(plan, 0, PlanExecutionState.NOT_STARTED, T0);
+    }
+
+    static Checkpoint startedCheckpoint(Plan plan) {
+        return executionCheckpoint(plan, 1, PlanExecutionState.ACTIVE, T0.plusSeconds(1));
+    }
+
+    static ExecutionStartRequest executionStartRequest(
+            Plan plan,
+            String leaseToken,
+            long fencingToken,
+            String eventId) {
+        return new ExecutionStartRequest(
+                plan.id(),
+                leaseToken,
+                fencingToken,
+                event(eventId, plan.taskFrameId(), plan.id(), 1),
+                startedCheckpoint(plan));
+    }
+
+    static InMemoryPersistence bootstrappedPersistence(Clock leaseClock) {
+        InMemoryPersistence persistence = new InMemoryPersistence(leaseClock);
+        requireApplied(persistence.planBootstraps().bootstrap(
+                taskFrame(),
+                plan(),
+                initialCheckpoint(plan())));
+        return persistence;
+    }
+
     static InMemoryPersistence initializedPersistence() {
         return initializedPersistence(new InMemoryPersistence());
     }
@@ -183,6 +240,84 @@ final class PersistenceFixtures {
     private static void requireApplied(PersistenceResult<?> result) {
         if (result.outcome() != PersistenceOutcome.APPLIED) {
             throw new AssertionError("fixture setup failed: " + result);
+        }
+    }
+
+    private static Checkpoint executionCheckpoint(
+            Plan plan,
+            long eventSequence,
+            PlanExecutionState planState,
+            Instant createdAt) {
+        Map<PlanStepId, StepExecutionState> states = new LinkedHashMap<>();
+        plan.latestRevision().steps().forEach(
+                step -> states.put(step.id(), StepExecutionState.NOT_STARTED));
+        return new Checkpoint(
+                plan.taskFrameId(),
+                plan.id(),
+                plan.latestRevision().id(),
+                plan.latestRevision().number(),
+                eventSequence,
+                planState,
+                states,
+                List.of(),
+                createdAt);
+    }
+
+    static final class MutableCountingClock extends Clock {
+        private final AtomicReference<Instant> current;
+        private final AtomicInteger observations;
+        private final AtomicBoolean failOnObservation;
+        private final ZoneId zone;
+
+        MutableCountingClock(Instant initial) {
+            this(
+                    new AtomicReference<>(initial),
+                    new AtomicInteger(),
+                    new AtomicBoolean(),
+                    ZoneOffset.UTC);
+        }
+
+        private MutableCountingClock(
+                AtomicReference<Instant> current,
+                AtomicInteger observations,
+                AtomicBoolean failOnObservation,
+                ZoneId zone) {
+            this.current = current;
+            this.observations = observations;
+            this.failOnObservation = failOnObservation;
+            this.zone = zone;
+        }
+
+        void set(Instant instant) {
+            current.set(instant);
+        }
+
+        void failOnObservation() {
+            failOnObservation.set(true);
+        }
+
+        int observationCount() {
+            return observations.get();
+        }
+
+        @Override
+        public ZoneId getZone() {
+            return zone;
+        }
+
+        @Override
+        public Clock withZone(ZoneId requestedZone) {
+            return new MutableCountingClock(
+                    current, observations, failOnObservation, requestedZone);
+        }
+
+        @Override
+        public Instant instant() {
+            observations.incrementAndGet();
+            if (failOnObservation.get()) {
+                throw new IllegalStateException("Clock must not be observed");
+            }
+            return current.get();
         }
     }
 }
