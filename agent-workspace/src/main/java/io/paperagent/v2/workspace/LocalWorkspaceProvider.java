@@ -6,6 +6,8 @@ import io.paperagent.v2.contracts.ProjectPath;
 import io.paperagent.v2.contracts.ProjectVersionRef;
 import io.paperagent.v2.contracts.WorkspaceDiff;
 import io.paperagent.v2.contracts.WorkspaceId;
+import io.paperagent.v2.contracts.WorkspaceMaterializationLimits;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
 import io.paperagent.v2.contracts.WorkspaceRef;
 
 import java.io.IOException;
@@ -27,7 +29,10 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
 
 import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 
@@ -41,13 +46,24 @@ import static java.nio.file.LinkOption.NOFOLLOW_LINKS;
 public final class LocalWorkspaceProvider implements WorkspacePort {
     private static final String DATA_DIRECTORY = "data";
     private static final String STAGING_DIRECTORY = "staging";
+    private static final ConcurrentHashMap<MaterializationClaimKey, Object>
+            MATERIALIZATION_CLAIMS =
+            new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<MaterializationClaimKey, RetiredTombstone>
+            RETIRED_TOMBSTONES =
+            new ConcurrentHashMap<>();
 
     private final Path providerRoot;
     private final ProjectVersionSource source;
     private final WorkspaceFileMover mover;
     private final WorkspaceMaterializationWriter materializationWriter;
     private final WorkspaceBackupReader backupReader;
-    private final Map<WorkspaceId, WorkspaceState> workspaces = new HashMap<>();
+    private final WorkspaceDirectoryPublisher directoryPublisher;
+    private final WorkspaceTreeDeleter treeDeleter;
+    private final boolean caseSensitive;
+    private final Map<WorkspaceId, WorkspaceRegistration> workspaces = new HashMap<>();
+    private final Map<ProjectVersionRef, ContentHash> sourceManifestFingerprints =
+            new HashMap<>();
 
     public LocalWorkspaceProvider(Path providerRoot, ProjectVersionSource source) {
         this(
@@ -55,7 +71,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 source,
                 LocalWorkspaceProvider::defaultMove,
                 Files::write,
-                LocalWorkspaceProvider::readBoundedNoFollow);
+                LocalWorkspaceProvider::readBoundedNoFollow,
+                LocalWorkspaceProvider::defaultPublish,
+                LocalWorkspaceProvider::deleteTree);
     }
 
     LocalWorkspaceProvider(
@@ -67,7 +85,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 source,
                 mover,
                 Files::write,
-                LocalWorkspaceProvider::readBoundedNoFollow);
+                LocalWorkspaceProvider::readBoundedNoFollow,
+                LocalWorkspaceProvider::defaultPublish,
+                LocalWorkspaceProvider::deleteTree);
     }
 
     LocalWorkspaceProvider(
@@ -79,7 +99,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 source,
                 LocalWorkspaceProvider::defaultMove,
                 Files::write,
-                backupReader);
+                backupReader,
+                LocalWorkspaceProvider::defaultPublish,
+                LocalWorkspaceProvider::deleteTree);
     }
 
     LocalWorkspaceProvider(
@@ -92,21 +114,44 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 source,
                 mover,
                 materializationWriter,
-                LocalWorkspaceProvider::readBoundedNoFollow);
+                LocalWorkspaceProvider::readBoundedNoFollow,
+                LocalWorkspaceProvider::defaultPublish,
+                LocalWorkspaceProvider::deleteTree);
     }
 
-    private LocalWorkspaceProvider(
+    LocalWorkspaceProvider(
+            Path providerRoot,
+            ProjectVersionSource source,
+            WorkspaceMaterializationWriter materializationWriter,
+            WorkspaceDirectoryPublisher directoryPublisher,
+            WorkspaceTreeDeleter treeDeleter) {
+        this(
+                providerRoot,
+                source,
+                LocalWorkspaceProvider::defaultMove,
+                materializationWriter,
+                LocalWorkspaceProvider::readBoundedNoFollow,
+                directoryPublisher,
+                treeDeleter);
+    }
+
+    LocalWorkspaceProvider(
             Path providerRoot,
             ProjectVersionSource source,
             WorkspaceFileMover mover,
             WorkspaceMaterializationWriter materializationWriter,
-            WorkspaceBackupReader backupReader) {
+            WorkspaceBackupReader backupReader,
+            WorkspaceDirectoryPublisher directoryPublisher,
+            WorkspaceTreeDeleter treeDeleter) {
         WorkspaceValues.require(providerRoot, "configureWorkspace");
         this.source = WorkspaceValues.require(source, "configureWorkspace");
         this.mover = WorkspaceValues.require(mover, "configureWorkspace");
         this.materializationWriter =
                 WorkspaceValues.require(materializationWriter, "configureWorkspace");
         this.backupReader = WorkspaceValues.require(backupReader, "configureWorkspace");
+        this.directoryPublisher =
+                WorkspaceValues.require(directoryPublisher, "configureWorkspace");
+        this.treeDeleter = WorkspaceValues.require(treeDeleter, "configureWorkspace");
         if (!providerRoot.isAbsolute()) {
             throw failure(WorkspaceErrorCode.PATH_ESCAPE, "configureWorkspace", null);
         }
@@ -115,49 +160,66 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
             Files.createDirectories(absolute);
             this.providerRoot = absolute.toRealPath();
             requireDirectoryWithoutLinks(this.providerRoot, "configureWorkspace", null);
+            this.caseSensitive = isCaseSensitive(this.providerRoot);
         } catch (IOException exception) {
             throw failure(WorkspaceErrorCode.IO_FAILURE, "configureWorkspace", null);
         }
     }
 
     @Override
-    public synchronized WorkspaceRef materialize(
-            WorkspaceId workspaceId,
-            ProjectVersionRef sourceVersion,
-            WorkspaceLimits limits) {
-        WorkspaceValues.require(workspaceId, "materialize");
-        WorkspaceValues.require(sourceVersion, "materialize");
-        WorkspaceValues.require(limits, "materialize");
-        if (workspaces.containsKey(workspaceId)) {
-            throw failure(WorkspaceErrorCode.WORKSPACE_ALREADY_EXISTS, "materialize", null);
+    public synchronized VerifiedWorkspaceMaterialization materialize(
+            WorkspaceMaterializationSpec spec) {
+        WorkspaceValues.require(spec, "materialize");
+        requireNotRetired(spec.workspaceId(), "materialize");
+        WorkspaceRegistration existing = workspaces.get(spec.workspaceId());
+        if (existing != null) {
+            return existingMaterialization(existing, spec, "materialize");
         }
+        rejectUnknownOccupancy(spec.workspaceId(), "materialize", null);
 
-        ProjectVersionSnapshot snapshot = loadSnapshot(sourceVersion);
-        WorkspaceManifestValidator.validateReference(snapshot, sourceVersion);
-        WorkspaceManifestValidator.validateLimits(snapshot.files(), limits);
+        ProjectVersionSnapshot snapshot = loadSnapshot(spec.sourceProjectVersion());
+        WorkspaceManifestValidator.validateReference(
+                snapshot,
+                spec.sourceProjectVersion());
+        WorkspaceManifestValidator.validateLimits(snapshot.files(), spec.limits());
         WorkspaceManifestValidator.validatePaths(snapshot.files(), true);
         WorkspaceManifestValidator.validateHashes(snapshot.files());
-
-        Path container = containerFor(workspaceId);
-        if (Files.exists(container, NOFOLLOW_LINKS)) {
-            throw failure(WorkspaceErrorCode.WORKSPACE_ALREADY_EXISTS, "materialize", null);
+        WorkspaceManifestValidator.validatePaths(snapshot.files(), caseSensitive);
+        ContentHash fingerprint = WorkspaceManifestFingerprint.calculate(snapshot);
+        ContentHash pinned = sourceManifestFingerprints.get(spec.sourceProjectVersion());
+        if (pinned != null && !pinned.equals(fingerprint)) {
+            throw failure(
+                    WorkspaceErrorCode.SOURCE_MANIFEST_FINGERPRINT_MISMATCH,
+                    "materialize",
+                    null);
         }
+        sourceManifestFingerprints.putIfAbsent(spec.sourceProjectVersion(), fingerprint);
 
-        WorkspaceRef workspace = new WorkspaceRef(workspaceId, sourceVersion);
+        Path container = containerFor(spec.workspaceId());
+        Path pending = pendingFor(spec.workspaceId());
+        WorkspaceRef workspace = new WorkspaceRef(
+                spec.workspaceId(),
+                spec.sourceProjectVersion());
         WorkspaceState state = new WorkspaceState(
                 workspace,
-                container,
-                container.resolve(DATA_DIRECTORY),
-                container.resolve(STAGING_DIRECTORY),
-                limits,
+                spec,
+                null,
+                pending,
+                pending.resolve(DATA_DIRECTORY),
+                pending.resolve(STAGING_DIRECTORY),
+                spec.limits(),
                 WorkspaceManifestValidator.baseline(snapshot.files()));
-        boolean complete = false;
+        MaterializationClaim claim = acquireMaterializationClaim(spec.workspaceId());
+        if (claim == null) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, "materialize", null);
+        }
+        boolean ownsPending = false;
         try {
-            Files.createDirectory(container);
+            rejectUnknownOccupancy(spec.workspaceId(), "materialize", claim);
+            Files.createDirectory(pending);
+            ownsPending = true;
             Files.createDirectory(state.dataRoot());
             Files.createDirectory(state.stagingRoot());
-            boolean caseSensitive = isCaseSensitive(state.stagingRoot());
-            WorkspaceManifestValidator.validatePaths(snapshot.files(), caseSensitive);
             for (ProjectFileSnapshot file : WorkspaceManifestValidator.sorted(snapshot.files())) {
                 byte[] content = file.content();
                 Path target = secureResolve(state, file.path(), false, "materialize");
@@ -167,20 +229,74 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                         content,
                         StandardOpenOption.CREATE_NEW,
                         StandardOpenOption.WRITE);
-                requireRegularFile(target, "materialize", file.path());
+                WorkspaceMaterializationVerifier.verifyWrittenFile(
+                        target,
+                        file,
+                        state.limits());
             }
-            workspaces.put(workspaceId, state);
-            complete = true;
-            return workspace;
+            requirePendingStructure(state);
+            WorkspaceMaterializationVerifier.verifyPending(
+                    state.dataRoot(),
+                    state.stagingRoot(),
+                    snapshot.files(),
+                    state.limits());
+            VerifiedWorkspaceMaterialization result =
+                    new VerifiedWorkspaceMaterialization(spec, fingerprint);
+            requireHeldClaim(claim, "materialize");
+            requirePendingStructure(state);
+            rejectFinalOccupancy(spec.workspaceId(), "materialize");
+            directoryPublisher.publish(pending, container);
+            ownsPending = false;
+            WorkspaceState active = state.published(container, result);
+            workspaces.put(
+                    spec.workspaceId(),
+                    WorkspaceRegistration.active(active));
+            return result;
         } catch (WorkspaceException exception) {
             throw exception;
+        } catch (AtomicMoveNotSupportedException exception) {
+            throw failure(
+                    WorkspaceErrorCode.ATOMIC_PUBLISH_NOT_SUPPORTED,
+                    "materialize",
+                    null);
+        } catch (FileAlreadyExistsException exception) {
+            throw failure(
+                    linkLike(container) || linkLike(pending)
+                            ? WorkspaceErrorCode.LINK_ESCAPE
+                            : WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    "materialize",
+                    null);
         } catch (IOException exception) {
             throw failure(WorkspaceErrorCode.IO_FAILURE, "materialize", null);
         } finally {
-            if (!complete) {
-                deleteTreeWithoutFollowing(container);
+            boolean claimTransferred = false;
+            if (ownsPending) {
+                claimTransferred =
+                        recoverOwnedPendingAfterMaterializationFailure(state, claim);
+            }
+            if (!claimTransferred) {
+                releaseMaterializationClaim(claim);
             }
         }
+    }
+
+    @Override
+    public synchronized VerifiedWorkspaceMaterialization inspectMaterialization(
+            WorkspaceMaterializationSpec spec) {
+        WorkspaceValues.require(spec, "inspectMaterialization");
+        requireNotRetired(spec.workspaceId(), "inspectMaterialization");
+        WorkspaceRegistration existing = workspaces.get(spec.workspaceId());
+        if (existing != null) {
+            return existingMaterialization(existing, spec, "inspectMaterialization");
+        }
+        rejectUnknownOccupancy(
+                spec.workspaceId(),
+                "inspectMaterialization",
+                null);
+        throw failure(
+                WorkspaceErrorCode.WORKSPACE_NOT_FOUND,
+                "inspectMaterialization",
+                null);
     }
 
     @Override
@@ -299,23 +415,76 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
     @Override
     public synchronized void cleanup(WorkspaceRef workspace) {
         WorkspaceValues.require(workspace, "cleanup");
-        Path expected = containerFor(workspace.id());
-        WorkspaceState state = workspaces.get(workspace.id());
-        if (state == null) {
-            if (!Files.exists(expected, NOFOLLOW_LINKS)) {
+        RetiredTombstone tombstone = retiredTombstone(workspace.id());
+        if (tombstone != null) {
+            requireMatchingTombstone(tombstone, workspace);
+            return;
+        }
+        WorkspaceRegistration registration = workspaces.get(workspace.id());
+        if (registration == null) {
+            requireNoSharedClaim(workspace.id(), "cleanup");
+            Path container = containerFor(workspace.id());
+            Path pending = pendingFor(workspace.id());
+            if (!Files.exists(container, NOFOLLOW_LINKS)
+                    && !Files.exists(pending, NOFOLLOW_LINKS)) {
                 return;
             }
-            throw failure(linkLike(expected)
+            throw failure(linkLike(container) || linkLike(pending)
                     ? WorkspaceErrorCode.LINK_ESCAPE
-                    : WorkspaceErrorCode.WORKSPACE_NOT_FOUND, "cleanup", null);
+                    : WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, "cleanup", null);
         }
+        WorkspaceState state = registration.state();
         requireMatchingReference(state, workspace, "cleanup");
-        requireManagedState(state, "cleanup");
-        rejectLinksInTree(state.container(), "cleanup");
+        if (registration.status() == RegistrationStatus.RETIRED) {
+            return;
+        }
+        MaterializationClaim cleanupClaim;
+        if (registration.status() == RegistrationStatus.ACTIVE) {
+            cleanupClaim = acquireMaterializationClaim(workspace.id());
+            if (cleanupClaim == null) {
+                throw failure(
+                        WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                        "cleanup",
+                        null);
+            }
+            try {
+                requireManagedState(state, "cleanup");
+                rejectLinksInTree(state.container(), "cleanup");
+            } catch (RuntimeException exception) {
+                releaseMaterializationClaim(cleanupClaim);
+                throw exception;
+            }
+            registration = WorkspaceRegistration.cleanupPending(
+                    state,
+                    cleanupClaim);
+            workspaces.put(workspace.id(), registration);
+        } else {
+            cleanupClaim = registration.retainedClaim("cleanup");
+            requireHeldClaim(cleanupClaim, "cleanup");
+        }
+        boolean failedMaterializationPending =
+                state.container().equals(pendingFor(workspace.id()));
         try {
-            deleteTree(state.container());
-            workspaces.remove(workspace.id());
-        } catch (IOException exception) {
+            if (!Files.notExists(state.container(), NOFOLLOW_LINKS)) {
+                if (failedMaterializationPending) {
+                    deleteOwnedPendingWithoutFollowing(state.container());
+                } else {
+                    if (linkLike(state.container())) {
+                        throw failure(WorkspaceErrorCode.LINK_ESCAPE, "cleanup", null);
+                    }
+                    rejectLinksInTree(state.container(), "cleanup");
+                    treeDeleter.delete(state.container());
+                }
+            }
+            if (!Files.notExists(state.container(), NOFOLLOW_LINKS)) {
+                throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, "cleanup", null);
+            }
+            registerRetiredTombstone(state, "cleanup");
+            workspaces.put(workspace.id(), WorkspaceRegistration.retired(state));
+            releaseMaterializationClaim(cleanupClaim);
+        } catch (WorkspaceException exception) {
+            throw exception;
+        } catch (IOException | RuntimeException exception) {
             throw failure(WorkspaceErrorCode.IO_FAILURE, "cleanup", null);
         }
     }
@@ -389,13 +558,199 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         }
     }
 
+    private VerifiedWorkspaceMaterialization existingMaterialization(
+            WorkspaceRegistration registration,
+            WorkspaceMaterializationSpec supplied,
+            String operation) {
+        if (registration.status() == RegistrationStatus.CLEANUP_PENDING) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+        }
+        if (registration.status() == RegistrationStatus.RETIRED) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_RETIRED, operation, null);
+        }
+        WorkspaceState state = registration.state();
+        if (!state.spec().equals(supplied)) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_SPEC_CONFLICT, operation, null);
+        }
+        requireManagedState(state, operation);
+        WorkspaceMaterializationVerifier.verifyActiveStructure(
+                state.container(),
+                state.dataRoot(),
+                state.stagingRoot(),
+                operation);
+        return state.materialization();
+    }
+
+    private void rejectUnknownOccupancy(
+            WorkspaceId workspaceId,
+            String operation,
+            MaterializationClaim ownedClaim) {
+        requireNotRetired(workspaceId, operation);
+        Path container = containerFor(workspaceId);
+        Path pending = pendingFor(workspaceId);
+        if (linkLike(container) || linkLike(pending)) {
+            throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, null);
+        }
+        if (Files.exists(container, NOFOLLOW_LINKS)
+                || Files.exists(pending, NOFOLLOW_LINKS)) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+        }
+        MaterializationClaimKey key =
+                new MaterializationClaimKey(providerRoot, workspaceId);
+        Object holder = MATERIALIZATION_CLAIMS.get(key);
+        if (holder != null && (ownedClaim == null || holder != ownedClaim.token())) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+        }
+        requireNotRetired(workspaceId, operation);
+    }
+
+    private void rejectFinalOccupancy(WorkspaceId workspaceId, String operation) {
+        requireNotRetired(workspaceId, operation);
+        Path container = containerFor(workspaceId);
+        if (linkLike(container)) {
+            throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, null);
+        }
+        if (Files.exists(container, NOFOLLOW_LINKS)) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+        }
+    }
+
+    private MaterializationClaim acquireMaterializationClaim(WorkspaceId workspaceId) {
+        MaterializationClaimKey key = claimKey(workspaceId);
+        Object token = new Object();
+        return MATERIALIZATION_CLAIMS.putIfAbsent(key, token) == null
+                ? new MaterializationClaim(key, token)
+                : null;
+    }
+
+    private static void requireHeldClaim(
+            MaterializationClaim claim,
+            String operation) {
+        if (MATERIALIZATION_CLAIMS.get(claim.key()) != claim.token()) {
+            throw failure(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    operation,
+                    null);
+        }
+    }
+
+    private static void releaseMaterializationClaim(MaterializationClaim claim) {
+        MATERIALIZATION_CLAIMS.remove(claim.key(), claim.token());
+    }
+
+    private MaterializationClaimKey claimKey(WorkspaceId workspaceId) {
+        return new MaterializationClaimKey(providerRoot, workspaceId);
+    }
+
+    private RetiredTombstone retiredTombstone(WorkspaceId workspaceId) {
+        return RETIRED_TOMBSTONES.get(claimKey(workspaceId));
+    }
+
+    private void requireNotRetired(
+            WorkspaceId workspaceId,
+            String operation) {
+        if (retiredTombstone(workspaceId) != null) {
+            throw failure(
+                    WorkspaceErrorCode.WORKSPACE_RETIRED,
+                    operation,
+                    null);
+        }
+    }
+
+    private void requireNoSharedClaim(
+            WorkspaceId workspaceId,
+            String operation) {
+        requireNotRetired(workspaceId, operation);
+        if (MATERIALIZATION_CLAIMS.containsKey(claimKey(workspaceId))) {
+            throw failure(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    operation,
+                    null);
+        }
+        requireNotRetired(workspaceId, operation);
+    }
+
+    private void registerRetiredTombstone(
+            WorkspaceState state,
+            String operation) {
+        RetiredTombstone candidate = new RetiredTombstone(
+                state.spec(),
+                state.workspace());
+        RetiredTombstone existing = RETIRED_TOMBSTONES.putIfAbsent(
+                claimKey(state.workspace().id()),
+                candidate);
+        if (existing != null && !existing.equals(candidate)) {
+            throw failure(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    operation,
+                    null);
+        }
+    }
+
+    private static void requireMatchingTombstone(
+            RetiredTombstone tombstone,
+            WorkspaceRef supplied) {
+        if (!tombstone.workspace().equals(supplied)) {
+            throw failure(
+                    WorkspaceErrorCode.WORKSPACE_REFERENCE_MISMATCH,
+                    "cleanup",
+                    null);
+        }
+    }
+
+    private void requirePendingStructure(WorkspaceState state) {
+        if (!state.container().equals(pendingFor(state.workspace().id()))
+                || !state.container().getParent().equals(providerRoot)
+                || !state.dataRoot().getParent().equals(state.container())
+                || !state.stagingRoot().getParent().equals(state.container())) {
+            throw failure(WorkspaceErrorCode.PATH_ESCAPE, "materialize", null);
+        }
+        requirePendingDirectory(state.container());
+        requirePendingDirectory(state.dataRoot());
+        requirePendingDirectory(state.stagingRoot());
+    }
+
+    private static void requirePendingDirectory(Path path) {
+        if (linkLike(path)) {
+            throw failure(
+                    WorkspaceErrorCode.LINK_ESCAPE,
+                    "materialize",
+                    null);
+        }
+        if (!Files.isDirectory(path, NOFOLLOW_LINKS)) {
+            throw failure(
+                    WorkspaceErrorCode.MATERIALIZATION_VERIFICATION_FAILED,
+                    "materialize",
+                    null);
+        }
+    }
+
     private WorkspaceState state(WorkspaceRef workspace, String operation) {
         WorkspaceValues.require(workspace, operation);
-        WorkspaceState state = workspaces.get(workspace.id());
-        if (state == null) {
+        requireNotRetired(workspace.id(), operation);
+        WorkspaceRegistration registration = workspaces.get(workspace.id());
+        if (registration == null) {
+            requireNoSharedClaim(workspace.id(), operation);
+            Path container = containerFor(workspace.id());
+            Path pending = pendingFor(workspace.id());
+            if (linkLike(container) || linkLike(pending)) {
+                throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, null);
+            }
+            if (Files.exists(container, NOFOLLOW_LINKS)
+                    || Files.exists(pending, NOFOLLOW_LINKS)) {
+                throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+            }
+            requireNoSharedClaim(workspace.id(), operation);
             throw failure(WorkspaceErrorCode.WORKSPACE_NOT_FOUND, operation, null);
         }
+        WorkspaceState state = registration.state();
         requireMatchingReference(state, workspace, operation);
+        if (registration.status() == RegistrationStatus.RETIRED) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_RETIRED, operation, null);
+        }
+        if (registration.status() == RegistrationStatus.CLEANUP_PENDING) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+        }
         requireManagedState(state, operation);
         return state;
     }
@@ -416,10 +771,10 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 || !state.container().equals(containerFor(state.workspace().id()))) {
             throw failure(WorkspaceErrorCode.PATH_ESCAPE, operation, null);
         }
-        requireDirectoryWithoutLinks(providerRoot, operation, null);
-        requireDirectoryWithoutLinks(state.container(), operation, null);
-        requireDirectoryWithoutLinks(state.dataRoot(), operation, null);
-        requireDirectoryWithoutLinks(state.stagingRoot(), operation, null);
+        requireRegisteredDirectory(providerRoot, operation);
+        requireRegisteredDirectory(state.container(), operation);
+        requireRegisteredDirectory(state.dataRoot(), operation);
+        requireRegisteredDirectory(state.stagingRoot(), operation);
         try {
             if (!providerRoot.equals(providerRoot.toRealPath())
                     || !state.container().toRealPath().startsWith(providerRoot)
@@ -428,7 +783,16 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 throw failure(WorkspaceErrorCode.PATH_ESCAPE, operation, null);
             }
         } catch (IOException exception) {
-            throw failure(WorkspaceErrorCode.IO_FAILURE, operation, null);
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+        }
+    }
+
+    private static void requireRegisteredDirectory(Path path, String operation) {
+        if (linkLike(path)) {
+            throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, null);
+        }
+        if (!Files.isDirectory(path, NOFOLLOW_LINKS)) {
+            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
         }
     }
 
@@ -767,7 +1131,7 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         }
     }
 
-    private static void deleteTree(Path root) throws IOException {
+    static void deleteTree(Path root) throws IOException {
         Files.walkFileTree(root, new SimpleFileVisitor<>() {
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes)
@@ -788,19 +1152,78 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         });
     }
 
-    private static void deleteTreeWithoutFollowing(Path root) {
-        if (!Files.exists(root, NOFOLLOW_LINKS)) {
+    private boolean recoverOwnedPendingAfterMaterializationFailure(
+            WorkspaceState state,
+            MaterializationClaim claim) {
+        boolean definitelyAbsent = definitelyAbsent(state.container());
+        if (!definitelyAbsent) {
+            try {
+                deleteOwnedPendingWithoutFollowing(state.container());
+            } catch (IOException | RuntimeException ignored) {
+                // The materialization failure remains authoritative.
+            }
+            definitelyAbsent = definitelyAbsent(state.container());
+        }
+        if (!definitelyAbsent) {
+            workspaces.put(
+                    state.workspace().id(),
+                    WorkspaceRegistration.cleanupPending(state, claim));
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean definitelyAbsent(Path path) {
+        return noThrowAbsenceProbe(
+                () -> Files.notExists(path, NOFOLLOW_LINKS));
+    }
+
+    static boolean noThrowAbsenceProbe(BooleanSupplier absenceProbe) {
+        try {
+            return absenceProbe.getAsBoolean();
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    private void deleteOwnedPendingWithoutFollowing(Path pending)
+            throws IOException {
+        removeLinkEntriesWithoutFollowing(pending);
+        if (!Files.notExists(pending, NOFOLLOW_LINKS)) {
+            treeDeleter.delete(pending);
+        }
+    }
+
+    private static void removeLinkEntriesWithoutFollowing(Path root)
+            throws IOException {
+        if (linkLike(root)) {
+            Files.delete(root);
             return;
         }
-        try {
-            if (linkLike(root)) {
-                Files.delete(root);
-            } else {
-                deleteTree(root);
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult preVisitDirectory(
+                    Path directory,
+                    BasicFileAttributes attributes)
+                    throws IOException {
+                if (linkLike(directory)) {
+                    Files.delete(directory);
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                return FileVisitResult.CONTINUE;
             }
-        } catch (IOException ignored) {
-            // Best-effort cleanup after a failed materialization; the original failure wins.
-        }
+
+            @Override
+            public FileVisitResult visitFile(
+                    Path file,
+                    BasicFileAttributes attributes)
+                    throws IOException {
+                if (attributes.isSymbolicLink() || attributes.isOther()) {
+                    Files.delete(file);
+                }
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private static void deleteRegularIfPresent(Path path) {
@@ -822,6 +1245,15 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         return container;
     }
 
+    private Path pendingFor(WorkspaceId id) {
+        String directoryName = "pending-" + WorkspaceHashes.sha256Text(id.value());
+        Path pending = providerRoot.resolve(directoryName).normalize();
+        if (!pending.getParent().equals(providerRoot)) {
+            throw failure(WorkspaceErrorCode.PATH_ESCAPE, "resolveWorkspace", null);
+        }
+        return pending;
+    }
+
     private static ProjectPath relative(WorkspaceState state, Path path) {
         Path relative = state.dataRoot().relativize(path);
         String value = relative.toString().replace(path.getFileSystem().getSeparator(), "/");
@@ -831,13 +1263,21 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
     private static boolean isCaseSensitive(Path stagingRoot) throws IOException {
         Path lower = stagingRoot.resolve(".paperagent-case-probe");
         Path upper = stagingRoot.resolve(".PAPERAGENT-CASE-PROBE");
-        Files.write(lower, new byte[]{0}, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        boolean created = false;
         try {
-            return !Files.exists(upper, NOFOLLOW_LINKS);
+            Files.write(
+                    lower,
+                    new byte[]{0},
+                    StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.WRITE);
+            created = true;
+            if (!Files.exists(upper, NOFOLLOW_LINKS)) {
+                return true;
+            }
+            return !Files.isSameFile(lower, upper);
         } finally {
-            Files.deleteIfExists(lower);
-            if (!lower.equals(upper)) {
-                Files.deleteIfExists(upper);
+            if (created) {
+                Files.deleteIfExists(lower);
             }
         }
     }
@@ -897,6 +1337,10 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         }
     }
 
+    static void defaultPublish(Path pending, Path target) throws IOException {
+        Files.move(pending, target, StandardCopyOption.ATOMIC_MOVE);
+    }
+
     private static WorkspaceException failure(
             WorkspaceErrorCode code,
             String operation,
@@ -906,13 +1350,98 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
 
     private record WorkspaceState(
             WorkspaceRef workspace,
+            WorkspaceMaterializationSpec spec,
+            VerifiedWorkspaceMaterialization materialization,
             Path container,
             Path dataRoot,
             Path stagingRoot,
-            WorkspaceLimits limits,
+            WorkspaceMaterializationLimits limits,
             Map<ProjectPath, ContentHash> baseline) {
         private WorkspaceState {
             baseline = Map.copyOf(baseline);
         }
+
+        private WorkspaceState published(
+                Path publishedContainer,
+                VerifiedWorkspaceMaterialization verifiedMaterialization) {
+            return new WorkspaceState(
+                    workspace,
+                    spec,
+                    verifiedMaterialization,
+                    publishedContainer,
+                    publishedContainer.resolve(DATA_DIRECTORY),
+                    publishedContainer.resolve(STAGING_DIRECTORY),
+                    limits,
+                    baseline);
+        }
+    }
+
+    private record WorkspaceRegistration(
+            RegistrationStatus status,
+            WorkspaceState state,
+            Optional<MaterializationClaim> retainedClaim) {
+        private WorkspaceRegistration {
+            if (status == null || state == null || retainedClaim == null) {
+                throw new IllegalArgumentException(
+                        "workspace registration components are required");
+            }
+            boolean mustRetain =
+                    status == RegistrationStatus.CLEANUP_PENDING;
+            if (mustRetain != retainedClaim.isPresent()) {
+                throw new IllegalArgumentException(
+                        "cleanup-pending claim invariant violated");
+            }
+        }
+
+        private static WorkspaceRegistration active(WorkspaceState state) {
+            return new WorkspaceRegistration(
+                    RegistrationStatus.ACTIVE,
+                    state,
+                    Optional.empty());
+        }
+
+        private static WorkspaceRegistration cleanupPending(
+                WorkspaceState state,
+                MaterializationClaim claim) {
+            return new WorkspaceRegistration(
+                    RegistrationStatus.CLEANUP_PENDING,
+                    state,
+                    Optional.of(claim));
+        }
+
+        private static WorkspaceRegistration retired(WorkspaceState state) {
+            return new WorkspaceRegistration(
+                    RegistrationStatus.RETIRED,
+                    state,
+                    Optional.empty());
+        }
+
+        private MaterializationClaim retainedClaim(String operation) {
+            return retainedClaim.orElseThrow(() -> failure(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    operation,
+                    null));
+        }
+    }
+
+    private record MaterializationClaimKey(
+            Path providerRoot,
+            WorkspaceId workspaceId) {
+    }
+
+    private record MaterializationClaim(
+            MaterializationClaimKey key,
+            Object token) {
+    }
+
+    private record RetiredTombstone(
+            WorkspaceMaterializationSpec spec,
+            WorkspaceRef workspace) {
+    }
+
+    private enum RegistrationStatus {
+        ACTIVE,
+        CLEANUP_PENDING,
+        RETIRED
     }
 }

@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.VERSION;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.assertBytes;
@@ -24,6 +25,7 @@ import static io.paperagent.v2.workspace.WorkspaceTestSupport.materialize;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.onlyContainer;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.provider;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.snapshot;
+import static io.paperagent.v2.workspace.WorkspaceTestSupport.spec;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -32,6 +34,62 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WorkspaceLinkSecurityTest {
     @TempDir
     Path root;
+
+    @Test
+    void activeReplayAndInspectRejectNestedSymbolicLinkWithoutWorkOrExternalMutation()
+            throws Exception {
+        Path providerRoot = root.resolve("provider");
+        Path outside = root.resolve("outside");
+        Files.createDirectories(providerRoot);
+        Files.createDirectories(outside);
+        Path sentinel = outside.resolve("sentinel.txt");
+        Files.writeString(sentinel, "preserve");
+        AtomicInteger loads = new AtomicInteger();
+        AtomicInteger writes = new AtomicInteger();
+        AtomicInteger publishes = new AtomicInteger();
+        AtomicInteger deletes = new AtomicInteger();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                providerRoot,
+                ignored -> {
+                    loads.incrementAndGet();
+                    return snapshot(file("inside.txt", "inside"));
+                },
+                (target, content, options) -> {
+                    writes.incrementAndGet();
+                    Files.write(target, content, options);
+                },
+                (pending, target) -> {
+                    publishes.incrementAndGet();
+                    LocalWorkspaceProvider.defaultPublish(pending, target);
+                },
+                target -> {
+                    deletes.incrementAndGet();
+                    LocalWorkspaceProvider.deleteTree(target);
+                });
+        var materializationSpec = spec("active-nested-link");
+        WorkspaceRef workspace = provider.materialize(materializationSpec).workspace();
+        Path link = dataRoot(providerRoot).resolve("external-link");
+        createRequiredSymbolicLink(link, outside);
+        int writesAfterSuccess = writes.get();
+
+        assertOpaqueLinkEscape(
+                () -> provider.materialize(materializationSpec),
+                outside);
+        assertOpaqueLinkEscape(
+                () -> provider.inspectMaterialization(materializationSpec),
+                outside);
+
+        assertEquals(1, loads.get());
+        assertEquals(writesAfterSuccess, writes.get());
+        assertEquals(1, publishes.get());
+        assertEquals(0, deletes.get());
+        assertTrue(Files.isSymbolicLink(link));
+        assertEquals("preserve", Files.readString(sentinel));
+        assertTrue(Files.exists(sentinel));
+
+        Files.delete(link);
+        provider.cleanup(workspace);
+    }
 
     @Test
     void realSymbolicLinkEscapeIsRejectedForEveryFilesystemBoundary() throws Exception {
@@ -207,6 +265,128 @@ class WorkspaceLinkSecurityTest {
         provider.cleanup(workspace);
     }
 
+    @Test
+    void failedPendingCleanupRetryDeletesLinkEntryWithoutTouchingTarget()
+            throws Exception {
+        Path providerRoot = root.resolve("provider");
+        Path outsideFile = root.resolve("outside.txt");
+        Files.createDirectories(providerRoot);
+        Files.writeString(outsideFile, "outside");
+        requireSymbolicLinkSupport(root.resolve("probe-link"), outsideFile);
+        AtomicInteger deleteAttempts = new AtomicInteger();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                providerRoot,
+                ignored -> snapshot(file("inside.txt", "inside")),
+                (target, content, options) -> Files.createSymbolicLink(target, outsideFile),
+                LocalWorkspaceProvider::defaultPublish,
+                target -> {
+                    if (deleteAttempts.incrementAndGet() == 1) {
+                        Files.createSymbolicLink(
+                                target.resolve("data/retry-link"),
+                                outsideFile);
+                        throw new IOException("forced pending cleanup failure");
+                    }
+                    LocalWorkspaceProvider.deleteTree(target);
+                });
+        var materializationSpec = spec("materialization-link-swap");
+        WorkspaceRef workspace = new WorkspaceRef(
+                materializationSpec.workspaceId(),
+                materializationSpec.sourceProjectVersion());
+
+        assertLinkEscape(() -> provider.materialize(materializationSpec));
+
+        Path pending = providerRoot.resolve(
+                "pending-" + WorkspaceHashes.sha256Text(
+                        materializationSpec.workspaceId().value()));
+        Path retryLink = pending.resolve("data/retry-link");
+        assertEquals(1, deleteAttempts.get());
+        assertTrue(Files.isSymbolicLink(retryLink));
+        WorkspaceException partial = assertThrows(
+                WorkspaceException.class,
+                () -> provider.inspectMaterialization(materializationSpec));
+        assertEquals(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, partial.code());
+        assertEquals("outside", Files.readString(outsideFile));
+        assertTrue(Files.exists(outsideFile));
+
+        provider.cleanup(workspace);
+
+        assertEquals(2, deleteAttempts.get());
+        assertFalse(Files.exists(pending, java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        assertEquals("outside", Files.readString(outsideFile));
+        assertTrue(Files.exists(outsideFile));
+        try (var entries = Files.list(providerRoot)) {
+            assertTrue(entries.findAny().isEmpty());
+        }
+    }
+
+    @Test
+    void unknownFinalAndPendingLinksAreNeverAdoptedOrDeleted() throws Exception {
+        Path providerRoot = root.resolve("provider");
+        Path outside = root.resolve("outside");
+        Files.createDirectories(providerRoot);
+        Files.createDirectories(outside);
+        Files.writeString(outside.resolve("keep.txt"), "keep");
+        requireSymbolicLinkSupport(root.resolve("probe-link"), outside);
+        LocalWorkspaceProvider provider = provider(
+                providerRoot,
+                snapshot(file("inside.txt", "inside")));
+
+        for (String prefix : java.util.List.of("ws-", "pending-")) {
+            var materializationSpec = spec("unknown-link-" + prefix);
+            Path occupied = providerRoot.resolve(
+                    prefix + WorkspaceHashes.sha256Text(
+                            materializationSpec.workspaceId().value()));
+            Files.createSymbolicLink(occupied, outside);
+            assertLinkEscape(() -> provider.materialize(materializationSpec));
+            assertLinkEscape(() -> provider.inspectMaterialization(materializationSpec));
+            assertLinkEscape(() -> provider.cleanup(new WorkspaceRef(
+                    materializationSpec.workspaceId(),
+                    materializationSpec.sourceProjectVersion())));
+            assertTrue(Files.isSymbolicLink(occupied));
+            assertEquals("keep", Files.readString(outside.resolve("keep.txt")));
+            Files.delete(occupied);
+        }
+    }
+
+    @Test
+    void windowsJunctionInsideWorkspaceIsRejectedWhenHostSupportsIt() throws Exception {
+        Assumptions.assumeTrue(isWindows(), "Windows-only junction/reparse coverage");
+        Path providerRoot = root.resolve("provider");
+        Path outside = root.resolve("outside");
+        Files.createDirectories(providerRoot);
+        Files.createDirectories(outside);
+        Files.writeString(outside.resolve("keep.txt"), "keep");
+        LocalWorkspaceProvider provider = provider(
+                providerRoot,
+                snapshot(file("inside.txt", "inside")));
+        var materializationSpec = spec("junction-boundary");
+        WorkspaceRef workspace = provider.materialize(materializationSpec).workspace();
+        Path junction = dataRoot(providerRoot).resolve("junction");
+        Process process = new ProcessBuilder(
+                "cmd",
+                "/c",
+                "mklink",
+                "/J",
+                junction.toString(),
+                outside.toString())
+                .redirectErrorStream(true)
+                .start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        int exit = process.waitFor();
+        Assumptions.assumeTrue(
+                exit == 0 && Files.exists(junction, java.nio.file.LinkOption.NOFOLLOW_LINKS),
+                "Windows host cannot create a junction: " + output);
+
+        assertLinkEscape(() -> provider.materialize(materializationSpec));
+        assertLinkEscape(() -> provider.inspectMaterialization(materializationSpec));
+        assertLinkEscape(() -> provider.list(workspace));
+        assertLinkEscape(() -> provider.cleanup(workspace));
+        assertEquals("keep", Files.readString(outside.resolve("keep.txt")));
+
+        Files.delete(junction);
+        provider.cleanup(workspace);
+    }
+
     private static void createRequiredSymbolicLink(Path link, Path target) throws IOException {
         try {
             Files.createSymbolicLink(link, target);
@@ -238,5 +418,16 @@ class WorkspaceLinkSecurityTest {
     private static void assertLinkEscape(Runnable operation) {
         WorkspaceException exception = assertThrows(WorkspaceException.class, operation::run);
         assertEquals(WorkspaceErrorCode.LINK_ESCAPE, exception.code());
+    }
+
+    private static void assertOpaqueLinkEscape(
+            Runnable operation,
+            Path sensitivePath) {
+        WorkspaceException exception =
+                assertThrows(WorkspaceException.class, operation::run);
+        assertEquals(WorkspaceErrorCode.LINK_ESCAPE, exception.code());
+        assertTrue(exception.projectPath().isEmpty());
+        assertFalse(exception.getMessage().contains(sensitivePath.toString()));
+        assertFalse(exception.getMessage().contains(sensitivePath.getFileName().toString()));
     }
 }

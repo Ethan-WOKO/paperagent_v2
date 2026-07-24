@@ -5,16 +5,26 @@ import io.paperagent.v2.contracts.ContractViolationException;
 import io.paperagent.v2.contracts.ProjectPath;
 import io.paperagent.v2.contracts.ProjectVersionRef;
 import io.paperagent.v2.contracts.WorkspaceId;
+import io.paperagent.v2.contracts.WorkspaceMaterializationLimits;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
 import io.paperagent.v2.contracts.WorkspaceRef;
 import io.paperagent.v2.contracts.ViolationCode;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryIteratorException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -26,6 +36,7 @@ import static io.paperagent.v2.workspace.WorkspaceTestSupport.materialize;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.onlyContainer;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.provider;
 import static io.paperagent.v2.workspace.WorkspaceTestSupport.snapshot;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -89,20 +100,188 @@ class WorkspaceFailureTest {
     }
 
     @Test
+    void throwingAbsenceProbeFailsClosedWithoutEscapingRuntime() {
+        assertFalse(LocalWorkspaceProvider.noThrowAbsenceProbe(() -> {
+            throw new SecurityException("raw probe failure");
+        }));
+        assertFalse(LocalWorkspaceProvider.noThrowAbsenceProbe(() -> {
+            throw new IllegalStateException("raw runtime failure");
+        }));
+        assertTrue(LocalWorkspaceProvider.noThrowAbsenceProbe(() -> true));
+    }
+
+    @Test
+    void zipProviderNoFollowUnsupportedMapsToOpaqueLinkEscape()
+            throws Exception {
+        Path archive = root.resolve("nofollow-provider.zip");
+        URI archiveUri = URI.create("jar:" + archive.toUri());
+        ProjectPath projectPath = new ProjectPath("entry.txt");
+        try (FileSystem zip = FileSystems.newFileSystem(
+                archiveUri,
+                Map.of("create", "true"))) {
+            Path entry = zip.getPath("/entry.txt");
+            Files.writeString(entry, "content");
+
+            assertThrows(
+                    UnsupportedOperationException.class,
+                    () -> {
+                        try (var ignored = Files.newInputStream(
+                                entry,
+                                StandardOpenOption.READ,
+                                java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                            // Opening is expected to fail before an InputStream exists.
+                        }
+                    });
+
+            WorkspaceException failure = assertThrows(
+                    WorkspaceException.class,
+                    () -> WorkspaceHashes.sha256(
+                            entry,
+                            1024,
+                            "hashZipEntry",
+                            projectPath));
+
+            assertEquals(WorkspaceErrorCode.LINK_ESCAPE, failure.code());
+            assertEquals("hashZipEntry", failure.operation());
+            assertEquals(projectPath, failure.projectPath().orElseThrow());
+            assertEquals(null, failure.getCause());
+            assertFalse(failure.getMessage().contains(archive.toString()));
+        }
+    }
+
+    @Test
+    void pendingDirectoryIteratorFailuresMapToOpaqueVerificationFailure() {
+        String sensitive = "sensitive host path";
+        List<DirectoryStream<Path>> streams = List.of(
+                new DirectoryStream<>() {
+                    @Override
+                    public Iterator<Path> iterator() {
+                        throw new DirectoryIteratorException(
+                                new IOException(sensitive));
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                },
+                new DirectoryStream<>() {
+                    @Override
+                    public Iterator<Path> iterator() {
+                        return new Iterator<>() {
+                            @Override
+                            public boolean hasNext() {
+                                throw new DirectoryIteratorException(
+                                        new IOException(sensitive));
+                            }
+
+                            @Override
+                            public Path next() {
+                                throw new AssertionError(
+                                        "next must not follow failed hasNext");
+                            }
+                        };
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                });
+
+        for (DirectoryStream<Path> stream : streams) {
+            WorkspaceException failure = assertThrows(
+                    WorkspaceException.class,
+                    () -> WorkspaceMaterializationVerifier.visitPendingEntries(
+                            stream,
+                            ignored -> {
+                            }));
+
+            assertEquals(
+                    WorkspaceErrorCode.MATERIALIZATION_VERIFICATION_FAILED,
+                    failure.code());
+            assertEquals("materialize", failure.operation());
+            assertTrue(failure.projectPath().isEmpty());
+            assertEquals(null, failure.getCause());
+            assertFalse(failure.getMessage().contains(sensitive));
+        }
+    }
+
+    @Test
+    void failedPendingCleanupRuntimeIsOpaqueAndRemainsRetryable() {
+        AtomicInteger deleteAttempts = new AtomicInteger();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                root,
+                ignored -> snapshot(file("paper.txt", "paper")),
+                (target, content, options) -> {
+                    throw new IOException("forced writer path " + target);
+                },
+                LocalWorkspaceProvider::defaultPublish,
+                target -> {
+                    int attempt = deleteAttempts.incrementAndGet();
+                    if (attempt == 1) {
+                        throw new IllegalStateException(
+                                "raw materialization cleanup path " + target);
+                    }
+                    if (attempt == 2) {
+                        throw new IllegalStateException(
+                                "raw cleanup path " + target);
+                    }
+                    LocalWorkspaceProvider.deleteTree(target);
+                });
+        WorkspaceMaterializationSpec spec = new WorkspaceMaterializationSpec(
+                new WorkspaceId("runtime-cleanup-retry"),
+                VERSION,
+                WorkspaceTestSupport.GENEROUS_LIMITS);
+        WorkspaceRef workspace = new WorkspaceRef(
+                spec.workspaceId(),
+                spec.sourceProjectVersion());
+
+        WorkspaceException materializationFailure = assertThrows(
+                WorkspaceException.class,
+                () -> provider.materialize(spec));
+        assertEquals(WorkspaceErrorCode.IO_FAILURE, materializationFailure.code());
+        assertTrue(materializationFailure.projectPath().isEmpty());
+        assertEquals(null, materializationFailure.getCause());
+        assertFalse(materializationFailure.getMessage().contains(root.toString()));
+        assertFalse(materializationFailure.getMessage().contains(
+                "raw materialization cleanup path"));
+        assertEquals(1, deleteAttempts.get());
+
+        WorkspaceException cleanupFailure = assertThrows(
+                WorkspaceException.class,
+                () -> provider.cleanup(workspace));
+
+        assertEquals(WorkspaceErrorCode.IO_FAILURE, cleanupFailure.code());
+        assertTrue(cleanupFailure.projectPath().isEmpty());
+        assertEquals(null, cleanupFailure.getCause());
+        assertFalse(cleanupFailure.getMessage().contains(root.toString()));
+        assertFalse(cleanupFailure.getMessage().contains("raw cleanup path"));
+        assertEquals(2, deleteAttempts.get());
+        assertCode(
+                WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                () -> provider.materialize(spec));
+
+        provider.cleanup(workspace);
+        assertEquals(3, deleteAttempts.get());
+        assertCode(
+                WorkspaceErrorCode.WORKSPACE_RETIRED,
+                () -> provider.materialize(spec));
+    }
+
+    @Test
     void appliesFileAggregateAndCountLimitsBeforeWriting() throws Exception {
         assertLimitFailure(
                 WorkspaceErrorCode.FILE_LIMIT_EXCEEDED,
-                new WorkspaceLimits(2, 100, 10),
+                new WorkspaceMaterializationLimits(2, 100, 10),
                 snapshot(file("too-big.txt", "abc")),
                 "file-limit");
         assertLimitFailure(
                 WorkspaceErrorCode.AGGREGATE_LIMIT_EXCEEDED,
-                new WorkspaceLimits(10, 3, 10),
+                new WorkspaceMaterializationLimits(10, 3, 10),
                 snapshot(file("a.txt", "aa"), file("b.txt", "bb")),
                 "aggregate-limit");
         assertLimitFailure(
                 WorkspaceErrorCode.FILE_COUNT_LIMIT_EXCEEDED,
-                new WorkspaceLimits(10, 100, 1),
+                new WorkspaceMaterializationLimits(10, 100, 1),
                 snapshot(file("a.txt", "a"), file("b.txt", "b")),
                 "count-limit");
     }
@@ -113,7 +292,7 @@ class WorkspaceFailureTest {
         WorkspaceRef workspace = materialize(
                 provider,
                 "write-limit",
-                new WorkspaceLimits(3, 3, 2));
+                new WorkspaceMaterializationLimits(3, 3, 2));
 
         assertCode(
                 WorkspaceErrorCode.FILE_LIMIT_EXCEEDED,
@@ -160,7 +339,7 @@ class WorkspaceFailureTest {
         WorkspaceRef workspace = materialize(
                 provider,
                 "bounded-backup",
-                new WorkspaceLimits(6, 64, 2));
+                new WorkspaceMaterializationLimits(6, 64, 2));
         Path dataFile = onlyContainer(root).resolve("data").resolve("base.txt");
 
         assertCode(
@@ -197,23 +376,43 @@ class WorkspaceFailureTest {
 
     @Test
     void sourceFailuresAndReferenceMismatchAreStable() {
-        LocalWorkspaceProvider failing = new LocalWorkspaceProvider(root, ignored -> {
-            throw new IllegalStateException("source details");
-        });
+        AtomicInteger deletes = new AtomicInteger();
+        WorkspaceTreeDeleter deleter = target -> {
+            deletes.incrementAndGet();
+            LocalWorkspaceProvider.deleteTree(target);
+        };
+        LocalWorkspaceProvider failing = new LocalWorkspaceProvider(
+                root,
+                ignored -> {
+                    throw new IllegalStateException("source details");
+                },
+                Files::write,
+                LocalWorkspaceProvider::defaultPublish,
+                deleter);
         assertCode(
                 WorkspaceErrorCode.SOURCE_FAILURE,
-                () -> failing.materialize(new WorkspaceId("source-failure"), VERSION,
-                        WorkspaceTestSupport.GENEROUS_LIMITS));
+                () -> failing.materialize(new WorkspaceMaterializationSpec(
+                        new WorkspaceId("source-failure"),
+                        VERSION,
+                        WorkspaceTestSupport.GENEROUS_LIMITS)));
 
         ProjectVersionSnapshot wrong = new ProjectVersionSnapshot(
                 new ProjectVersionRef("project-1", "wrong"),
                 List.of(),
                 Map.of());
-        LocalWorkspaceProvider mismatch = new LocalWorkspaceProvider(root, ignored -> wrong);
+        LocalWorkspaceProvider mismatch = new LocalWorkspaceProvider(
+                root,
+                ignored -> wrong,
+                Files::write,
+                LocalWorkspaceProvider::defaultPublish,
+                deleter);
         assertCode(
                 WorkspaceErrorCode.SOURCE_REFERENCE_MISMATCH,
-                () -> mismatch.materialize(new WorkspaceId("source-mismatch"), VERSION,
-                        WorkspaceTestSupport.GENEROUS_LIMITS));
+                () -> mismatch.materialize(new WorkspaceMaterializationSpec(
+                        new WorkspaceId("source-mismatch"),
+                        VERSION,
+                        WorkspaceTestSupport.GENEROUS_LIMITS)));
+        assertEquals(0, deletes.get());
     }
 
     @Test
@@ -231,6 +430,47 @@ class WorkspaceFailureTest {
                     WorkspaceErrorCode.PATH_COLLISION,
                     () -> materialize(provider, "case-insensitive"));
             assertRootEmpty();
+        }
+    }
+
+    @Test
+    void constructorCaseProbePreservesPreexistingUppercaseSentinel()
+            throws Exception {
+        Path providerRoot = root.resolve("shared-provider");
+        Files.createDirectories(providerRoot);
+        Assumptions.assumeTrue(
+                probeCaseSensitivity(providerRoot),
+                "Requires a genuinely case-sensitive filesystem; Ubuntu CI must execute");
+        Path sentinel = providerRoot.resolve(".PAPERAGENT-CASE-PROBE");
+        byte[] sentinelBytes = bytes("preserve-unknown-entry");
+        Files.write(sentinel, sentinelBytes, StandardOpenOption.CREATE_NEW);
+
+        LocalWorkspaceProvider provider = provider(
+                providerRoot,
+                snapshot(
+                        file("Readme.md", "first"),
+                        file("README.md", "second")));
+
+        assertBytes("preserve-unknown-entry", Files.readAllBytes(sentinel));
+        assertFalse(Files.exists(
+                providerRoot.resolve(".paperagent-case-probe")));
+
+        WorkspaceRef workspace = materialize(provider, "case-probe-ownership");
+        assertEquals(2, provider.list(workspace).size());
+        assertBytes(
+                "first",
+                provider.read(workspace, new ProjectPath("Readme.md")));
+        assertBytes(
+                "second",
+                provider.read(workspace, new ProjectPath("README.md")));
+
+        provider.cleanup(workspace);
+
+        assertArrayEquals(sentinelBytes, Files.readAllBytes(sentinel));
+        assertFalse(Files.exists(
+                providerRoot.resolve(".paperagent-case-probe")));
+        try (var entries = Files.list(providerRoot)) {
+            assertEquals(List.of(sentinel), entries.toList());
         }
     }
 
@@ -319,7 +559,7 @@ class WorkspaceFailureTest {
 
     private void assertLimitFailure(
             WorkspaceErrorCode expected,
-            WorkspaceLimits limits,
+            WorkspaceMaterializationLimits limits,
             ProjectVersionSnapshot snapshot,
             String id) throws Exception {
         assertCode(expected, () -> materialize(provider(root, snapshot), id, limits));

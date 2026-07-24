@@ -1,15 +1,21 @@
 package io.paperagent.v2.workspace;
 
+import io.paperagent.v2.contracts.ContentHash;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
+import io.paperagent.v2.contracts.WorkspaceRef;
 import org.junit.jupiter.api.Test;
 import org.w3c.dom.Element;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkspaceModuleBoundaryTest {
@@ -46,6 +52,37 @@ class WorkspaceModuleBoundaryTest {
                 }
             }
         }
+    }
+
+    @Test
+    void materializationPublicSurfaceIsHardCutToSharedSpecAndVerifiedResult()
+            throws Exception {
+        Method materialize = WorkspacePort.class.getMethod(
+                "materialize",
+                WorkspaceMaterializationSpec.class);
+        Method inspect = WorkspacePort.class.getMethod(
+                "inspectMaterialization",
+                WorkspaceMaterializationSpec.class);
+        assertEquals(VerifiedWorkspaceMaterialization.class, materialize.getReturnType());
+        assertEquals(VerifiedWorkspaceMaterialization.class, inspect.getReturnType());
+        assertEquals(
+                1,
+                Arrays.stream(WorkspacePort.class.getMethods())
+                        .filter(method -> method.getName().equals("materialize"))
+                        .count());
+        assertThrows(
+                ClassNotFoundException.class,
+                () -> Class.forName("io.paperagent.v2.workspace.WorkspaceLimits"));
+
+        assertTrue(VerifiedWorkspaceMaterialization.class.isRecord());
+        assertEquals(
+                List.of(WorkspaceMaterializationSpec.class, ContentHash.class),
+                Arrays.stream(VerifiedWorkspaceMaterialization.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                WorkspaceRef.class,
+                VerifiedWorkspaceMaterialization.class.getMethod("workspace").getReturnType());
     }
 
     private static Path moduleDirectory() {

@@ -23,6 +23,8 @@ import io.paperagent.v2.contracts.ToolCallId;
 import io.paperagent.v2.contracts.ToolDescriptor;
 import io.paperagent.v2.contracts.ToolId;
 import io.paperagent.v2.contracts.WorkspaceId;
+import io.paperagent.v2.contracts.WorkspaceMaterializationLimits;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
 import io.paperagent.v2.contracts.WorkspaceRef;
 import io.paperagent.v2.persistence.InMemoryPersistence;
 import io.paperagent.v2.providers.CorrelationId;
@@ -44,7 +46,6 @@ import io.paperagent.v2.sandbox.ScriptedSandboxPort;
 import io.paperagent.v2.workspace.LocalWorkspaceProvider;
 import io.paperagent.v2.workspace.ProjectFileSnapshot;
 import io.paperagent.v2.workspace.ProjectVersionSnapshot;
-import io.paperagent.v2.workspace.WorkspaceLimits;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -154,10 +155,13 @@ final class Wave2HarnessTestSupport {
     }
 
     WorkspaceRef materialize() {
-        return workspaceProvider.materialize(
+        return workspaceProvider.materialize(new WorkspaceMaterializationSpec(
                 workspaceId,
                 projectVersion,
-                new WorkspaceLimits(16 * 1024L, 64 * 1024L, 8));
+                new WorkspaceMaterializationLimits(
+                        16 * 1024L,
+                        64 * 1024L,
+                        8))).workspace();
     }
 
     ModelRequest modelRequest(TaskFrame storedTaskFrame, Plan storedPlan) {

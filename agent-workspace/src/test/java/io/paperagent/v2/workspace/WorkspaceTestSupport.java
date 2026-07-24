@@ -4,6 +4,8 @@ import io.paperagent.v2.contracts.ContentHash;
 import io.paperagent.v2.contracts.ProjectPath;
 import io.paperagent.v2.contracts.ProjectVersionRef;
 import io.paperagent.v2.contracts.WorkspaceId;
+import io.paperagent.v2.contracts.WorkspaceMaterializationLimits;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
 import io.paperagent.v2.contracts.WorkspaceRef;
 
 import java.io.IOException;
@@ -18,7 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 final class WorkspaceTestSupport {
     static final ProjectVersionRef VERSION = new ProjectVersionRef("project-1", "version-1");
-    static final WorkspaceLimits GENEROUS_LIMITS = new WorkspaceLimits(1024, 8192, 32);
+    static final WorkspaceMaterializationLimits GENEROUS_LIMITS =
+            new WorkspaceMaterializationLimits(1024, 8192, 32);
 
     private WorkspaceTestSupport() {
     }
@@ -46,12 +49,26 @@ final class WorkspaceTestSupport {
     static WorkspaceRef materialize(
             LocalWorkspaceProvider provider,
             String workspaceId,
-            WorkspaceLimits limits) {
-        return provider.materialize(new WorkspaceId(workspaceId), VERSION, limits);
+            WorkspaceMaterializationLimits limits) {
+        return provider.materialize(spec(workspaceId, VERSION, limits)).workspace();
     }
 
     static WorkspaceRef materialize(LocalWorkspaceProvider provider, String workspaceId) {
         return materialize(provider, workspaceId, GENEROUS_LIMITS);
+    }
+
+    static WorkspaceMaterializationSpec spec(String workspaceId) {
+        return spec(workspaceId, VERSION, GENEROUS_LIMITS);
+    }
+
+    static WorkspaceMaterializationSpec spec(
+            String workspaceId,
+            ProjectVersionRef source,
+            WorkspaceMaterializationLimits limits) {
+        return new WorkspaceMaterializationSpec(
+                new WorkspaceId(workspaceId),
+                source,
+                limits);
     }
 
     static Path onlyContainer(Path root) throws IOException {
