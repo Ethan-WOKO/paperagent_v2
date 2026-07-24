@@ -208,6 +208,12 @@ class StepActivationRepositoryConcurrencyTest {
                         TOKEN,
                         lease.fencingToken(),
                         "start-expiry-race")));
+        confirmContext(
+                persistence,
+                PersistenceFixtures.plan(),
+                TOKEN,
+                lease.fencingToken(),
+                "expiry-race");
         StepActivationRequest oldRequest =
                 PersistenceFixtures.stepActivationRequest(
                         PersistenceFixtures.plan(),
@@ -354,6 +360,18 @@ class StepActivationRepositoryConcurrencyTest {
         requireApplied(persistence.executionStarts().start(
                 PersistenceFixtures.executionStartRequest(
                         second, "token-2", secondLease.fencingToken(), "start-2")));
+        confirmContext(
+                persistence,
+                first,
+                "token-1",
+                firstLease.fencingToken(),
+                "shared-first");
+        confirmContext(
+                persistence,
+                second,
+                "token-2",
+                secondLease.fencingToken(),
+                "shared-second");
         StepActivationRequest firstRequest = activationFor(
                 first, "token-1", firstLease.fencingToken(),
                 "shared-activation-id");
@@ -396,6 +414,8 @@ class StepActivationRepositoryConcurrencyTest {
                 new InMemoryExecutionStartRepository(state);
         StepActivationRepository activations =
                 new InMemoryStepActivationRepository(state);
+        PlanExecutionContextRepository contexts =
+                new InMemoryPlanExecutionContextRepository(state);
 
         Plan first = PersistenceFixtures.plan();
         TaskFrameId secondTaskId = new TaskFrameId("task-independent-2");
@@ -434,6 +454,18 @@ class StepActivationRepositoryConcurrencyTest {
                         "independent-token-2",
                         secondLease.fencingToken(),
                         "independent-start-2")));
+        PersistenceFixtures.confirmExecutionContext(
+                contexts,
+                first,
+                "independent-token-1",
+                firstLease.fencingToken(),
+                PersistenceFixtures.workspaceSpec("independent-first"));
+        PersistenceFixtures.confirmExecutionContext(
+                contexts,
+                second,
+                "independent-token-2",
+                secondLease.fencingToken(),
+                PersistenceFixtures.workspaceSpec("independent-second"));
         StepActivationRequest firstRequest = activationFor(
                 first,
                 "independent-token-1",
@@ -521,6 +553,12 @@ class StepActivationRepositoryConcurrencyTest {
                         TOKEN,
                         lease.fencingToken(),
                         "start-concurrency")));
+        confirmContext(
+                persistence,
+                PersistenceFixtures.plan(),
+                TOKEN,
+                lease.fencingToken(),
+                "concurrency");
         StepActivationRequest request =
                 PersistenceFixtures.stepActivationRequest(
                         PersistenceFixtures.plan(),
@@ -528,6 +566,20 @@ class StepActivationRepositoryConcurrencyTest {
                         lease.fencingToken(),
                         "activation-concurrency");
         return new Scenario(persistence, request);
+    }
+
+    private static void confirmContext(
+            InMemoryPersistence persistence,
+            Plan plan,
+            String token,
+            long fence,
+            String suffix) {
+        PersistenceFixtures.confirmExecutionContext(
+                persistence.planExecutionContexts(),
+                plan,
+                token,
+                fence,
+                PersistenceFixtures.workspaceSpec(suffix));
     }
 
     private static StepActivationRequest activationFor(

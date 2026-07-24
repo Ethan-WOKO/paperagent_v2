@@ -329,6 +329,19 @@ class PlanBootstrapRepositoryTest {
                         taskFrame, wrongTaskPlan, initialCheckpoint(wrongTaskPlan)),
                 PersistenceErrorCode.BOOTSTRAP_PARTIAL_STATE,
                 "bootstrap");
+
+        InMemoryState contextState = new InMemoryState(
+                java.time.Clock.systemUTC());
+        var spec = PersistenceFixtures.workspaceSpec(
+                "orphan-bootstrap");
+        contextState.workspaceOwners.put(
+                spec.workspaceId(),
+                new InMemoryState.WorkspaceOwner(plan.id(), spec));
+        assertFailure(
+                new InMemoryPlanBootstrapRepository(contextState).bootstrap(
+                        taskFrame, plan, checkpoint),
+                PersistenceErrorCode.BOOTSTRAP_PARTIAL_STATE,
+                "bootstrap");
     }
 
     @Test

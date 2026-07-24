@@ -195,6 +195,13 @@ class ExecutionStartRecoveryRepositoryConcurrencyTest {
                     PersistenceFixtures.plan(),
                     advancedToken,
                     "advanced-lease-event-" + iteration);
+            PersistenceFixtures.confirmExecutionContext(
+                    advancedPersistence.planExecutionContexts(),
+                    PersistenceFixtures.plan(),
+                    advancedToken,
+                    advancedStart.fencingToken(),
+                    PersistenceFixtures.workspaceSpec(
+                            "advanced-" + iteration));
             requireApplied(advancedPersistence.stepActivations().activate(
                     PersistenceFixtures.stepActivationRequest(
                             PersistenceFixtures.plan(),
@@ -225,6 +232,13 @@ class ExecutionStartRecoveryRepositoryConcurrencyTest {
                     PersistenceFixtures.plan(),
                     "progress-token-" + iteration,
                     "progress-start-" + iteration);
+            PersistenceFixtures.confirmExecutionContext(
+                    persistence.planExecutionContexts(),
+                    PersistenceFixtures.plan(),
+                    "progress-token-" + iteration,
+                    progressStart.fencingToken(),
+                    PersistenceFixtures.workspaceSpec(
+                            "progress-" + iteration));
             int suffix = iteration;
 
             RaceResult<

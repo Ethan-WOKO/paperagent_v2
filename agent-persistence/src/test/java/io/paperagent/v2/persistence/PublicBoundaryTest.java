@@ -34,6 +34,7 @@ class PublicBoundaryTest {
                 LeaseRepository.class,
                 ExecutionStartRepository.class,
                 ExecutionStartRecoveryRepository.class,
+                PlanExecutionContextRepository.class,
                 StepActivationRepository.class,
                 IdempotencyRepository.class);
 
@@ -65,6 +66,8 @@ class PublicBoundaryTest {
                 InMemoryExecutionStartRepository.class,
                 InMemoryExecutionStartRecoveryRepository.class,
                 InMemoryExecutionMutationAuthority.class,
+                InMemoryPlanExecutionContextRepository.class,
+                InMemoryPlanExecutionContextAuthority.class,
                 InMemoryStepActivationRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
@@ -356,6 +359,170 @@ class PublicBoundaryTest {
                 StepActivationRepository.class,
                 InMemoryPersistence.class
                         .getDeclaredMethod("stepActivations")
+                        .getReturnType());
+    }
+
+    @Test
+    void planExecutionContextSurfaceIsExactAndTokenFree()
+            throws Exception {
+        Map<String, Method> methods = Arrays.stream(
+                        PlanExecutionContextRepository.class
+                                .getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()));
+        assertEquals(Set.of("reserve", "confirm", "inspect"),
+                methods.keySet());
+        assertMethod(
+                methods.get("reserve"),
+                PersistenceResult.class,
+                PlanExecutionContextReservationRequest.class);
+        assertMethod(
+                methods.get("confirm"),
+                PersistenceResult.class,
+                PlanExecutionContextConfirmationRequest.class);
+        assertMethod(
+                methods.get("inspect"),
+                PersistenceResult.class,
+                PlanId.class);
+
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "expectedRevisionId",
+                        "expectedRevisionNumber",
+                        "expectedCheckpointVersion",
+                        "expectedEventHeadSequence",
+                        "materializationSpec"),
+                Arrays.stream(
+                                PlanExecutionContextReservationRequest.class
+                                        .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        io.paperagent.v2.contracts.PlanRevisionId.class,
+                        long.class,
+                        long.class,
+                        long.class,
+                        io.paperagent.v2.contracts
+                                .WorkspaceMaterializationSpec.class),
+                Arrays.stream(
+                                PlanExecutionContextReservationRequest.class
+                                        .getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "materializationSpec",
+                        "sourceManifestFingerprint"),
+                Arrays.stream(
+                                PlanExecutionContextConfirmationRequest.class
+                                        .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        io.paperagent.v2.contracts
+                                .WorkspaceMaterializationSpec.class,
+                        io.paperagent.v2.contracts.ContentHash.class),
+                Arrays.stream(
+                                PlanExecutionContextConfirmationRequest.class
+                                        .getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertTrue(PlanExecutionContextSnapshot.class.isSealed());
+        Map<String, Method> snapshotMethods = Arrays.stream(
+                        PlanExecutionContextSnapshot.class
+                                .getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()));
+        assertEquals(
+                Set.of("planId", "materializationSpec"),
+                snapshotMethods.keySet());
+        assertMethod(snapshotMethods.get("planId"), PlanId.class);
+        assertMethod(
+                snapshotMethods.get("materializationSpec"),
+                io.paperagent.v2.contracts
+                        .WorkspaceMaterializationSpec.class);
+        assertEquals(
+                Set.of(
+                        PersistedPlanExecutionContextReserved.class,
+                        PersistedPlanExecutionContextConfirmed.class),
+                Set.of(PlanExecutionContextSnapshot.class
+                        .getPermittedSubclasses()));
+        assertEquals(
+                List.of(
+                        "planId",
+                        "materializationSpec",
+                        "leaseOwnerId",
+                        "fencingToken"),
+                Arrays.stream(
+                                PersistedPlanExecutionContextReserved.class
+                                        .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        io.paperagent.v2.contracts
+                                .WorkspaceMaterializationSpec.class,
+                        String.class,
+                        long.class),
+                Arrays.stream(
+                                PersistedPlanExecutionContextReserved.class
+                                        .getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "reservation",
+                        "leaseOwnerId",
+                        "fencingToken",
+                        "sourceManifestFingerprint"),
+                Arrays.stream(
+                                PersistedPlanExecutionContextConfirmed.class
+                                        .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PersistedPlanExecutionContextReserved.class,
+                        String.class,
+                        long.class,
+                        io.paperagent.v2.contracts.ContentHash.class),
+                Arrays.stream(
+                                PersistedPlanExecutionContextConfirmed.class
+                                        .getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        for (Class<?> result : List.of(
+                PersistedPlanExecutionContextReserved.class,
+                PersistedPlanExecutionContextConfirmed.class)) {
+            assertTrue(Arrays.stream(result.getDeclaredFields())
+                    .noneMatch(field ->
+                            field.getName().equals("leaseToken")
+                                    || field.getType()
+                                            == PlanExecutionContextReservationRequest.class
+                                    || field.getType()
+                                            == PlanExecutionContextConfirmationRequest.class));
+        }
+        assertEquals(
+                PlanExecutionContextRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("planExecutionContexts")
                         .getReturnType());
     }
 

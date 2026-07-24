@@ -73,6 +73,8 @@ class StepActivationRepositoryBoundaryTest {
             assertFalse(authoritySource.contains(forbidden), forbidden);
         }
         assertTrue(activationSource.contains("state.observeLeaseTime()"));
+        assertTrue(activationSource.contains(
+                "InMemoryPlanExecutionContextAuthority.inspect"));
         assertFalse(activationSource.contains("Clock"));
         assertFalse(authoritySource.contains("observeLeaseTime"));
         assertFalse(authoritySource.contains("Clock"));
@@ -89,8 +91,13 @@ class StepActivationRepositoryBoundaryTest {
                 InMemoryState.ExecutionMutationLink.class,
                 InMemoryState.ExecutionMutationMarkerIdentity.class,
                 InMemoryState.StepActivationMarker.class,
+                InMemoryState.PlanExecutionContextReservationMarker.class,
+                InMemoryState.PlanExecutionContextConfirmationMarker.class,
+                InMemoryState.WorkspaceOwner.class,
                 InMemoryExecutionMutationAuthority.class,
-                InMemoryExecutionMutationAuthority.AuthoritativeSource.class)) {
+                InMemoryExecutionMutationAuthority.AuthoritativeSource.class,
+                InMemoryPlanExecutionContextAuthority.class,
+                InMemoryPlanExecutionContextAuthority.ContextCut.class)) {
             assertFalse(java.lang.reflect.Modifier.isPublic(
                     type.getModifiers()));
         }

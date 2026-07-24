@@ -3,6 +3,7 @@ package io.paperagent.v2.persistence;
 import io.paperagent.v2.contracts.BoundedExecutionHints;
 import io.paperagent.v2.contracts.Capability;
 import io.paperagent.v2.contracts.Checkpoint;
+import io.paperagent.v2.contracts.ContentHash;
 import io.paperagent.v2.contracts.EventEnvelope;
 import io.paperagent.v2.contracts.EventId;
 import io.paperagent.v2.contracts.EventType;
@@ -29,6 +30,9 @@ import io.paperagent.v2.contracts.TaskFrame;
 import io.paperagent.v2.contracts.TaskFrameId;
 import io.paperagent.v2.contracts.TextValue;
 import io.paperagent.v2.contracts.ToolCallId;
+import io.paperagent.v2.contracts.WorkspaceId;
+import io.paperagent.v2.contracts.WorkspaceMaterializationLimits;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -50,6 +54,8 @@ final class PersistenceFixtures {
     static final PlanId PLAN_ID = new PlanId("plan-1");
     static final PlanStepId STEP_1 = new PlanStepId("step-1");
     static final PlanStepId STEP_2 = new PlanStepId("step-2");
+    static final ContentHash SOURCE_FINGERPRINT =
+            new ContentHash("sha256", "a".repeat(64));
 
     private PersistenceFixtures() {
     }
@@ -79,6 +85,21 @@ final class PersistenceFixtures {
                                 8),
                         Set.of()),
                 T0);
+    }
+
+    static TaskFrame sourceLessTaskFrame(
+            TaskFrameId id,
+            String objective) {
+        TaskFrame source = taskFrame(id, objective);
+        return new TaskFrame(
+                source.id(),
+                source.objective(),
+                source.targets(),
+                source.deliverables(),
+                source.constraints(),
+                Optional.empty(),
+                source.executionProfile(),
+                source.createdAt());
     }
 
     static PlanStep step(PlanStepId id, Set<PlanStepId> dependencies) {
@@ -229,6 +250,71 @@ final class PersistenceFixtures {
                 STEP_1,
                 eventId,
                 3);
+    }
+
+    static WorkspaceMaterializationSpec workspaceSpec(
+            String suffix,
+            ProjectVersionRef sourceProjectVersion) {
+        return new WorkspaceMaterializationSpec(
+                new WorkspaceId("workspace-" + suffix),
+                sourceProjectVersion,
+                new WorkspaceMaterializationLimits(
+                        1024 * 1024L,
+                        8 * 1024 * 1024L,
+                        128));
+    }
+
+    static WorkspaceMaterializationSpec workspaceSpec(String suffix) {
+        return workspaceSpec(
+                suffix,
+                taskFrame().sourceProjectVersion().orElseThrow());
+    }
+
+    static PlanExecutionContextReservationRequest contextReservationRequest(
+            Plan plan,
+            String leaseToken,
+            long fencingToken,
+            WorkspaceMaterializationSpec spec) {
+        return new PlanExecutionContextReservationRequest(
+                plan.id(),
+                leaseToken,
+                fencingToken,
+                plan.latestRevision().id(),
+                plan.latestRevision().number(),
+                2,
+                1,
+                spec);
+    }
+
+    static PlanExecutionContextConfirmationRequest contextConfirmationRequest(
+            Plan plan,
+            String leaseToken,
+            long fencingToken,
+            WorkspaceMaterializationSpec spec) {
+        return new PlanExecutionContextConfirmationRequest(
+                plan.id(),
+                leaseToken,
+                fencingToken,
+                spec,
+                SOURCE_FINGERPRINT);
+    }
+
+    static PersistedPlanExecutionContextConfirmed confirmExecutionContext(
+            PlanExecutionContextRepository contexts,
+            Plan plan,
+            String leaseToken,
+            long fencingToken,
+            WorkspaceMaterializationSpec spec) {
+        requireApplied(contexts.reserve(contextReservationRequest(
+                plan, leaseToken, fencingToken, spec)));
+        PersistenceResult<PersistedPlanExecutionContextConfirmed> result =
+                contexts.confirm(contextConfirmationRequest(
+                        plan, leaseToken, fencingToken, spec));
+        if (result.outcome() != PersistenceOutcome.APPLIED) {
+            throw new AssertionError(
+                    "fixture setup failed: " + result);
+        }
+        return result.value().orElseThrow();
     }
 
     static StepActivationRequest stepActivationRequest(

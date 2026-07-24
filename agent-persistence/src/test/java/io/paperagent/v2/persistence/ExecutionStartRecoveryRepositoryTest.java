@@ -15,6 +15,7 @@ import io.paperagent.v2.contracts.PlanRevisionId;
 import io.paperagent.v2.contracts.ReceiptId;
 import io.paperagent.v2.contracts.StepExecutionState;
 import io.paperagent.v2.contracts.TextValue;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -183,6 +184,16 @@ class ExecutionStartRecoveryRepositoryTest {
         int fencingObservations = fencingClock.observationCount();
         assertPartial(fencingOnly.recovery().inspect(PersistenceFixtures.PLAN_ID));
         assertEquals(fencingObservations, fencingClock.observationCount());
+
+        Harness contextOnly = harness();
+        var orphanSpec = PersistenceFixtures.workspaceSpec(
+                "recovery-owner-only");
+        contextOnly.state().workspaceOwners.put(
+                orphanSpec.workspaceId(),
+                new InMemoryState.WorkspaceOwner(
+                        PersistenceFixtures.PLAN_ID, orphanSpec));
+        assertPartial(contextOnly.recovery().inspect(
+                PersistenceFixtures.PLAN_ID));
 
         Harness lookalike = harness();
         requireApplied(lookalike.taskFrames().create(PersistenceFixtures.taskFrame()));
@@ -376,6 +387,13 @@ class ExecutionStartRecoveryRepositoryTest {
         Harness checkpointAdvanced = bootstrappedHarness();
         PersistedExecutionStart started =
                 start(checkpointAdvanced, TOKEN, "start-checkpoint");
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(
+                        checkpointAdvanced.state()),
+                PersistenceFixtures.plan(),
+                TOKEN,
+                started.fencingToken(),
+                PersistenceFixtures.workspaceSpec("recovery-advanced"));
         requireApplied(checkpointAdvanced.activations().activate(
                 PersistenceFixtures.stepActivationRequest(
                         PersistenceFixtures.plan(),
@@ -383,6 +401,266 @@ class ExecutionStartRecoveryRepositoryTest {
                         started.fencingToken(),
                         "activation-3")));
         assertAdvanced(checkpointAdvanced.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+    }
+
+    @Test
+    void committedRecoveryAcceptsNoneReservedAndConfirmedContext() {
+        Harness none = bootstrappedHarness();
+        start(none, TOKEN, "start-context-none");
+        assertTrue(none.recovery().inspect(PersistenceFixtures.PLAN_ID)
+                .value().orElseThrow()
+                instanceof PersistedExecutionStartCommitted);
+
+        Harness reserved = bootstrappedHarness();
+        PersistedExecutionStart reservedStart =
+                start(reserved, TOKEN, "start-context-reserved");
+        var reservedSpec = PersistenceFixtures.workspaceSpec(
+                "recovery-reserved");
+        requireApplied(
+                new InMemoryPlanExecutionContextRepository(
+                        reserved.state()).reserve(
+                                PersistenceFixtures
+                                        .contextReservationRequest(
+                                                PersistenceFixtures.plan(),
+                                                TOKEN,
+                                                reservedStart.fencingToken(),
+                                                reservedSpec)));
+        assertTrue(reserved.recovery().inspect(PersistenceFixtures.PLAN_ID)
+                .value().orElseThrow()
+                instanceof PersistedExecutionStartCommitted);
+
+        Harness confirmed = bootstrappedHarness();
+        PersistedExecutionStart confirmedStart =
+                start(confirmed, TOKEN, "start-context-confirmed");
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(
+                        confirmed.state()),
+                PersistenceFixtures.plan(),
+                TOKEN,
+                confirmedStart.fencingToken(),
+                PersistenceFixtures.workspaceSpec(
+                        "recovery-confirmed"));
+        assertTrue(confirmed.recovery().inspect(
+                        PersistenceFixtures.PLAN_ID)
+                .value().orElseThrow()
+                instanceof PersistedExecutionStartCommitted);
+    }
+
+    @Test
+    void impossibleContextAndSuccessorCutsAreAlwaysPartial() {
+        Harness reservedSuccessor = bootstrappedHarness();
+        PersistedExecutionStart reservedSuccessorStart =
+                start(
+                        reservedSuccessor,
+                        TOKEN,
+                        "reserved-successor");
+        WorkspaceMaterializationSpec reservedSpec =
+                PersistenceFixtures.workspaceSpec(
+                        "reserved-successor");
+        PlanExecutionContextRepository reservedContexts =
+                new InMemoryPlanExecutionContextRepository(
+                        reservedSuccessor.state());
+        PersistenceFixtures.confirmExecutionContext(
+                reservedContexts,
+                PersistenceFixtures.plan(),
+                TOKEN,
+                reservedSuccessorStart.fencingToken(),
+                reservedSpec);
+        requireApplied(reservedSuccessor.activations().activate(
+                PersistenceFixtures.stepActivationRequest(
+                        PersistenceFixtures.plan(),
+                        TOKEN,
+                        reservedSuccessorStart.fencingToken(),
+                        "activation-reserved-successor")));
+        reservedSuccessor.state()
+                .planExecutionContextConfirmations
+                .remove(PersistenceFixtures.PLAN_ID);
+        assertPartial(reservedSuccessor.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+
+        Harness missingContextSuccessor = bootstrappedHarness();
+        PersistedExecutionStart missingContextStart =
+                start(
+                        missingContextSuccessor,
+                        TOKEN,
+                        "missing-context-successor");
+        WorkspaceMaterializationSpec missingContextSpec =
+                PersistenceFixtures.workspaceSpec(
+                        "missing-context-successor");
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(
+                        missingContextSuccessor.state()),
+                PersistenceFixtures.plan(),
+                TOKEN,
+                missingContextStart.fencingToken(),
+                missingContextSpec);
+        requireApplied(missingContextSuccessor.activations().activate(
+                PersistenceFixtures.stepActivationRequest(
+                        PersistenceFixtures.plan(),
+                        TOKEN,
+                        missingContextStart.fencingToken(),
+                        "activation-missing-context-successor")));
+        missingContextSuccessor.state()
+                .planExecutionContextConfirmations
+                .remove(PersistenceFixtures.PLAN_ID);
+        missingContextSuccessor.state()
+                .planExecutionContextReservations
+                .remove(PersistenceFixtures.PLAN_ID);
+        missingContextSuccessor.state().workspaceOwners
+                .remove(missingContextSpec.workspaceId());
+        assertPartial(missingContextSuccessor.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+
+        Harness sourceLess = harness();
+        requireApplied(sourceLess.bootstraps().bootstrap(
+                PersistenceFixtures.sourceLessTaskFrame(
+                        PersistenceFixtures.TASK_ID,
+                        "source-less context corruption"),
+                PersistenceFixtures.plan(),
+                PersistenceFixtures.initialCheckpoint(
+                        PersistenceFixtures.plan())));
+        PersistedExecutionStart sourceLessStart =
+                start(sourceLess, TOKEN, "source-less-context");
+        WorkspaceMaterializationSpec sourceLessSpec =
+                PersistenceFixtures.workspaceSpec(
+                        "source-less-context");
+        PlanExecutionContextReservationRequest sourceLessRequest =
+                PersistenceFixtures.contextReservationRequest(
+                        PersistenceFixtures.plan(),
+                        TOKEN,
+                        sourceLessStart.fencingToken(),
+                        sourceLessSpec);
+        PersistedPlanExecutionContextReserved sourceLessReserved =
+                new PersistedPlanExecutionContextReserved(
+                        PersistenceFixtures.PLAN_ID,
+                        sourceLessSpec,
+                        OWNER,
+                        sourceLessStart.fencingToken());
+        sourceLess.state().planExecutionContextReservations.put(
+                PersistenceFixtures.PLAN_ID,
+                new InMemoryState
+                        .PlanExecutionContextReservationMarker(
+                                sourceLessRequest,
+                                sourceLessReserved,
+                                sourceLess.state()
+                                        .executionMutationHeads
+                                        .get(PersistenceFixtures.PLAN_ID)));
+        sourceLess.state().workspaceOwners.put(
+                sourceLessSpec.workspaceId(),
+                new InMemoryState.WorkspaceOwner(
+                        PersistenceFixtures.PLAN_ID,
+                        sourceLessSpec));
+        assertPartial(sourceLess.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+
+        Harness confirmationOnly = bootstrappedHarness();
+        PersistedExecutionStart confirmationOnlyStart =
+                start(
+                        confirmationOnly,
+                        TOKEN,
+                        "confirmation-only");
+        WorkspaceMaterializationSpec confirmationOnlySpec =
+                PersistenceFixtures.workspaceSpec(
+                        "confirmation-only-recovery");
+        PersistedPlanExecutionContextReserved absentReservation =
+                new PersistedPlanExecutionContextReserved(
+                        PersistenceFixtures.PLAN_ID,
+                        confirmationOnlySpec,
+                        OWNER,
+                        confirmationOnlyStart.fencingToken());
+        PlanExecutionContextConfirmationRequest confirmationRequest =
+                PersistenceFixtures.contextConfirmationRequest(
+                        PersistenceFixtures.plan(),
+                        TOKEN,
+                        confirmationOnlyStart.fencingToken(),
+                        confirmationOnlySpec);
+        confirmationOnly.state()
+                .planExecutionContextConfirmations.put(
+                        PersistenceFixtures.PLAN_ID,
+                        new InMemoryState
+                                .PlanExecutionContextConfirmationMarker(
+                                        confirmationRequest,
+                                        new PersistedPlanExecutionContextConfirmed(
+                                                absentReservation,
+                                                OWNER,
+                                                confirmationOnlyStart
+                                                        .fencingToken(),
+                                                confirmationRequest
+                                                        .sourceManifestFingerprint())));
+        assertPartial(confirmationOnly.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+
+        Harness wrongSpec = bootstrappedHarness();
+        PersistedExecutionStart wrongSpecStart =
+                start(wrongSpec, TOKEN, "wrong-spec");
+        WorkspaceMaterializationSpec originalSpec =
+                PersistenceFixtures.workspaceSpec(
+                        "wrong-spec-original");
+        PlanExecutionContextRepository wrongSpecContexts =
+                new InMemoryPlanExecutionContextRepository(
+                        wrongSpec.state());
+        PersistenceFixtures.confirmExecutionContext(
+                wrongSpecContexts,
+                PersistenceFixtures.plan(),
+                TOKEN,
+                wrongSpecStart.fencingToken(),
+                originalSpec);
+        InMemoryState.PlanExecutionContextConfirmationMarker
+                wrongSpecMarker =
+                wrongSpec.state()
+                        .planExecutionContextConfirmations
+                        .get(PersistenceFixtures.PLAN_ID);
+        wrongSpec.state().planExecutionContextConfirmations.put(
+                PersistenceFixtures.PLAN_ID,
+                new InMemoryState
+                        .PlanExecutionContextConfirmationMarker(
+                                new PlanExecutionContextConfirmationRequest(
+                                        PersistenceFixtures.PLAN_ID,
+                                        TOKEN,
+                                        wrongSpecStart.fencingToken(),
+                                        PersistenceFixtures.workspaceSpec(
+                                                "wrong-confirm-spec"),
+                                        wrongSpecMarker.request()
+                                                .sourceManifestFingerprint()),
+                                wrongSpecMarker.result()));
+        assertPartial(wrongSpec.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+
+        Harness wrongH0 = bootstrappedHarness();
+        PersistedExecutionStart wrongH0Start =
+                start(wrongH0, TOKEN, "wrong-h0");
+        WorkspaceMaterializationSpec wrongH0Spec =
+                PersistenceFixtures.workspaceSpec("wrong-h0");
+        requireApplied(new InMemoryPlanExecutionContextRepository(
+                wrongH0.state()).reserve(
+                        PersistenceFixtures
+                                .contextReservationRequest(
+                                        PersistenceFixtures.plan(),
+                                        TOKEN,
+                                        wrongH0Start.fencingToken(),
+                                        wrongH0Spec)));
+        InMemoryState.PlanExecutionContextReservationMarker
+                wrongH0Marker =
+                wrongH0.state()
+                        .planExecutionContextReservations
+                        .get(PersistenceFixtures.PLAN_ID);
+        InMemoryState.ExecutionMutationHead h0 =
+                wrongH0Marker.frozenH0();
+        wrongH0.state().planExecutionContextReservations.put(
+                PersistenceFixtures.PLAN_ID,
+                new InMemoryState
+                        .PlanExecutionContextReservationMarker(
+                                wrongH0Marker.request(),
+                                wrongH0Marker.result(),
+                                new InMemoryState.ExecutionMutationHead(
+                                        h0.revisionId(),
+                                        h0.revisionNumber(),
+                                        h0.checkpointVersion(),
+                                        h0.eventHeadSequence(),
+                                        new EventId(
+                                                "wrong-context-h0"))));
+        assertPartial(wrongH0.recovery()
                 .inspect(PersistenceFixtures.PLAN_ID));
     }
 

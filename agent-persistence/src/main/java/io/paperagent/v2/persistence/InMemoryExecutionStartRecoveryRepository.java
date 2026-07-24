@@ -1,7 +1,6 @@
 package io.paperagent.v2.persistence;
 
 import io.paperagent.v2.contracts.Checkpoint;
-import io.paperagent.v2.contracts.EventEnvelope;
 import io.paperagent.v2.contracts.Plan;
 import io.paperagent.v2.contracts.PlanExecutionState;
 import io.paperagent.v2.contracts.PlanId;
@@ -11,7 +10,6 @@ import io.paperagent.v2.contracts.StepExecutionState;
 import io.paperagent.v2.contracts.TaskFrame;
 
 import java.util.List;
-import java.util.NavigableMap;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -39,10 +37,20 @@ final class InMemoryExecutionStartRecoveryRepository
             if (!hasConsistentBootstrapRoot(planId, bootstrap, currentPlan)) {
                 return partialState();
             }
+            if (!InMemoryPlanExecutionContextAuthority
+                    .hasValidGlobalIndex(state)) {
+                return partialState();
+            }
 
             boolean hasStartMarker = state.executionStarts.containsKey(planId);
             if (!hasStartMarker) {
-                if (!isStrictReady(planId, bootstrap, currentPlan)) {
+                if (!InMemoryPlanExecutionContextAuthority
+                                .isStrictPreStart(
+                                        state,
+                                        planId,
+                                        bootstrap,
+                                        currentPlan)
+                        || hasContextOccupancy(planId)) {
                     return partialState();
                 }
                 return PersistenceResult.found(
@@ -57,6 +65,13 @@ final class InMemoryExecutionStartRecoveryRepository
             if (source == null) {
                 return partialState();
             }
+            InMemoryPlanExecutionContextAuthority.ContextCut context =
+                    InMemoryPlanExecutionContextAuthority.inspect(
+                            state, planId, source);
+            if (context.status()
+                    == InMemoryPlanExecutionContextAuthority.Status.PARTIAL) {
+                return partialState();
+            }
 
             if (source.links().isEmpty()
                     && source.activationMarkers().isEmpty()
@@ -67,7 +82,17 @@ final class InMemoryExecutionStartRecoveryRepository
                                 bootstrap, currentPlan, marker.result()));
             }
             if (!source.links().isEmpty()) {
-                return advancedState();
+                return context.status()
+                                        == InMemoryPlanExecutionContextAuthority
+                                                .Status.CONFIRMED
+                                || source.taskFrame()
+                                        .sourceProjectVersion()
+                                        .isEmpty()
+                                        && context.status()
+                                                == InMemoryPlanExecutionContextAuthority
+                                                        .Status.NONE
+                        ? advancedState()
+                        : partialState();
             }
             return partialState();
         }
@@ -115,29 +140,11 @@ final class InMemoryExecutionStartRecoveryRepository
                 && latest.completedFacts().isEmpty();
     }
 
-    private boolean isStrictReady(
-            PlanId planId,
-            PersistedPlanBootstrap bootstrap,
-            Plan currentPlan) {
-        NavigableMap<Long, EventEnvelope> stream =
-                state.eventStreams.get(planId);
-        return bootstrap.initialCheckpoint().equals(state.checkpoints.get(planId))
-                && (stream == null
-                        ? !state.eventStreams.containsKey(planId)
-                        : stream.isEmpty())
-                && planIndexIsEmpty(planId)
-                && currentPlan.latestRevision().completedFacts().isEmpty()
-                && !state.executionMutationHeads.containsKey(planId)
-                && !state.executionMutationLinks.containsKey(planId)
-                && !state.stepActivations.containsKey(planId);
-    }
-
     private boolean isStrictCommitted(
             PlanId planId,
             Plan currentPlan,
             PersistedExecutionStart executionStart) {
-        NavigableMap<Long, EventEnvelope> stream =
-                state.eventStreams.get(planId);
+        var stream = state.eventStreams.get(planId);
         Checkpoint started = executionStart.startedCheckpoint().checkpoint();
         return stream.size() == 1
                 && executionStart.startedCheckpoint().equals(
@@ -145,10 +152,11 @@ final class InMemoryExecutionStartRecoveryRepository
                 && matchesRevision(currentPlan.latestRevision(), started);
     }
 
-    private boolean planIndexIsEmpty(PlanId planId) {
-        return state.eventsById.values().stream()
-                .noneMatch(event ->
-                        event != null && planId.equals(event.planId()));
+    private boolean hasContextOccupancy(PlanId planId) {
+        return state.planExecutionContextReservations.containsKey(planId)
+                || state.planExecutionContextConfirmations.containsKey(planId)
+                || InMemoryPlanExecutionContextAuthority
+                        .hasOwnerReference(state, planId);
     }
 
     private static boolean hasExactStepShape(

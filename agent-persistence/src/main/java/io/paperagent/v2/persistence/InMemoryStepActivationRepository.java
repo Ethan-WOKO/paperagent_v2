@@ -66,6 +66,24 @@ final class InMemoryStepActivationRepository
                         ? partialState()
                         : PersistenceChecks.notFound("request.planId");
             }
+            InMemoryPlanExecutionContextAuthority.ContextCut context =
+                    InMemoryPlanExecutionContextAuthority.inspect(
+                            state, request.planId(), source);
+            if (context.status()
+                    == InMemoryPlanExecutionContextAuthority.Status.PARTIAL) {
+                return partialState();
+            }
+            if (source.taskFrame().sourceProjectVersion().isEmpty()) {
+                if (context.status()
+                        != InMemoryPlanExecutionContextAuthority.Status.NONE) {
+                    return partialState();
+                }
+            } else if (context.status()
+                    != InMemoryPlanExecutionContextAuthority.Status.CONFIRMED) {
+                return PersistenceResult.rejected(
+                        PersistenceErrorCode.STEP_ACTIVATION_NOT_ELIGIBLE,
+                        ELIGIBILITY_PATH);
+            }
 
             LeaseRecord lease = state.leases.get(request.planId());
             if (lease == null) {

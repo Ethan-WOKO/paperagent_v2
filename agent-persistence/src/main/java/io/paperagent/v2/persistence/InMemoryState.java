@@ -9,6 +9,8 @@ import io.paperagent.v2.contracts.PlanRevisionId;
 import io.paperagent.v2.contracts.ReceiptId;
 import io.paperagent.v2.contracts.TaskFrame;
 import io.paperagent.v2.contracts.TaskFrameId;
+import io.paperagent.v2.contracts.WorkspaceId;
+import io.paperagent.v2.contracts.WorkspaceMaterializationSpec;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -38,6 +40,12 @@ final class InMemoryState {
     final Map<PlanId, List<ExecutionMutationLink>> executionMutationLinks =
             new LinkedHashMap<>();
     final Map<PlanId, Map<EventId, StepActivationMarker>> stepActivations =
+            new LinkedHashMap<>();
+    final Map<PlanId, PlanExecutionContextReservationMarker>
+            planExecutionContextReservations = new LinkedHashMap<>();
+    final Map<PlanId, PlanExecutionContextConfirmationMarker>
+            planExecutionContextConfirmations = new LinkedHashMap<>();
+    final Map<WorkspaceId, WorkspaceOwner> workspaceOwners =
             new LinkedHashMap<>();
     final Map<PlanId, LeaseRecord> leases = new HashMap<>();
     final Map<PlanId, Long> fencingTokens = new HashMap<>();
@@ -128,6 +136,42 @@ final class InMemoryState {
                     + "request=<provided>, "
                     + "result=<provided>, "
                     + "provenanceLink=<provided>]";
+        }
+    }
+
+    record PlanExecutionContextReservationMarker(
+            PlanExecutionContextReservationRequest request,
+            PersistedPlanExecutionContextReserved result,
+            ExecutionMutationHead frozenH0) {
+
+        @Override
+        public String toString() {
+            return "PlanExecutionContextReservationMarker["
+                    + "request=<provided>, "
+                    + "result=<provided>, "
+                    + "frozenH0=<provided>]";
+        }
+    }
+
+    record PlanExecutionContextConfirmationMarker(
+            PlanExecutionContextConfirmationRequest request,
+            PersistedPlanExecutionContextConfirmed result) {
+
+        @Override
+        public String toString() {
+            return "PlanExecutionContextConfirmationMarker["
+                    + "request=<provided>, result=<provided>]";
+        }
+    }
+
+    record WorkspaceOwner(
+            PlanId planId,
+            WorkspaceMaterializationSpec materializationSpec) {
+
+        @Override
+        public String toString() {
+            return "WorkspaceOwner["
+                    + "planId=<provided>, materializationSpec=<provided>]";
         }
     }
 }
