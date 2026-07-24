@@ -235,8 +235,8 @@ class StepActivationRepositoryTest {
                 harness.state().stepActivations
                         .get(PersistenceFixtures.PLAN_ID)
                         .get(request.activationEvent().id());
-        InMemoryStepActivationRepository.AuthoritativeSource source =
-                InMemoryStepActivationRepository.validateAuthoritativeSource(
+        InMemoryExecutionMutationAuthority.AuthoritativeSource source =
+                InMemoryExecutionMutationAuthority.validateAuthoritativeSource(
                         harness.state(), PersistenceFixtures.PLAN_ID);
 
         for (Object authority : List.of(

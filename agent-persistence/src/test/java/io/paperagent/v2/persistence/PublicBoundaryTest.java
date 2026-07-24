@@ -64,6 +64,7 @@ class PublicBoundaryTest {
                 InMemoryLeaseRepository.class,
                 InMemoryExecutionStartRepository.class,
                 InMemoryExecutionStartRecoveryRepository.class,
+                InMemoryExecutionMutationAuthority.class,
                 InMemoryStepActivationRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
