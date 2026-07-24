@@ -46,7 +46,13 @@ final class InMemoryPlanBootstrapRepository implements PlanBootstrapRepository {
             }
             if (state.taskFrames.containsKey(taskFrame.id())
                     || state.plans.containsKey(plan.id())
-                    || state.checkpoints.containsKey(plan.id())) {
+                    || state.checkpoints.containsKey(plan.id())
+                    || state.planExecutionContextReservations
+                            .containsKey(plan.id())
+                    || state.planExecutionContextConfirmations
+                            .containsKey(plan.id())
+                    || InMemoryPlanExecutionContextAuthority
+                            .hasOwnerReference(state, plan.id())) {
                 return PersistenceResult.rejected(
                         PersistenceErrorCode.BOOTSTRAP_PARTIAL_STATE, "bootstrap");
             }

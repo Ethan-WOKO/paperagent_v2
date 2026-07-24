@@ -28,8 +28,12 @@ final class InMemoryExecutionMutationAuthority {
     static AuthoritativeSource validateAuthoritativeSource(
             InMemoryState state,
             PlanId planId) {
-        Plan plan = state.plans.get(planId);
-        PersistedPlanBootstrap bootstrap = state.planBootstraps.get(planId);
+        PlanRoot planRoot = validatePlanRoot(state, planId);
+        if (planRoot == null) {
+            return null;
+        }
+        Plan plan = planRoot.plan();
+        PersistedPlanBootstrap bootstrap = planRoot.bootstrap();
         InMemoryState.ExecutionStartMarker start =
                 state.executionStarts.get(planId);
         VersionedCheckpoint current = state.checkpoints.get(planId);
@@ -53,10 +57,8 @@ final class InMemoryExecutionMutationAuthority {
                 || stream.isEmpty()) {
             return null;
         }
-        TaskFrame taskFrame = state.taskFrames.get(plan.taskFrameId());
-        if (!hasCanonicalBootstrapRoot(
-                        planId, taskFrame, plan, bootstrap)
-                || !hasCanonicalStart(
+        TaskFrame taskFrame = planRoot.taskFrame();
+        if (!hasCanonicalStart(
                         planId, taskFrame, plan, bootstrap, start)
                 || !hasConsistentEventProjection(
                         state, planId, taskFrame, stream)
@@ -124,6 +126,22 @@ final class InMemoryExecutionMutationAuthority {
                 stream,
                 links,
                 activationMarkers);
+    }
+
+    static PlanRoot validatePlanRoot(
+            InMemoryState state,
+            PlanId planId) {
+        Plan plan = state.plans.get(planId);
+        PersistedPlanBootstrap bootstrap =
+                state.planBootstraps.get(planId);
+        if (plan == null || bootstrap == null) {
+            return null;
+        }
+        TaskFrame taskFrame = state.taskFrames.get(plan.taskFrameId());
+        return hasCanonicalBootstrapRoot(
+                        planId, taskFrame, plan, bootstrap)
+                ? new PlanRoot(taskFrame, plan, bootstrap)
+                : null;
     }
 
     static InMemoryState.ExecutionMutationHead headFromStart(
@@ -469,6 +487,10 @@ final class InMemoryExecutionMutationAuthority {
                 || state.executionMutationHeads.containsKey(planId)
                 || state.executionMutationLinks.containsKey(planId)
                 || state.stepActivations.containsKey(planId)
+                || state.planExecutionContextReservations.containsKey(planId)
+                || state.planExecutionContextConfirmations.containsKey(planId)
+                || InMemoryPlanExecutionContextAuthority
+                        .hasOwnerReference(state, planId)
                 || state.leases.containsKey(planId)
                 || state.fencingTokens.containsKey(planId);
     }
@@ -538,6 +560,20 @@ final class InMemoryExecutionMutationAuthority {
                     + "eventStream=<provided>, "
                     + "links=<provided>, "
                     + "activationMarkers=<provided>]";
+        }
+    }
+
+    record PlanRoot(
+            TaskFrame taskFrame,
+            Plan plan,
+            PersistedPlanBootstrap bootstrap) {
+
+        @Override
+        public String toString() {
+            return "PlanRoot["
+                    + "taskFrame=<provided>, "
+                    + "plan=<provided>, "
+                    + "bootstrap=<provided>]";
         }
     }
 }

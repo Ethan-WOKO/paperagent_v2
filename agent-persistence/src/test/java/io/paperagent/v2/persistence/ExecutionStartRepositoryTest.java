@@ -375,7 +375,15 @@ class ExecutionStartRepositoryTest {
                                 1,
                                 PersistenceFixtures.T0,
                                 PersistenceFixtures.T0.plusSeconds(30))),
-                state -> state.fencingTokens.put(orphanPlan.id(), 1L));
+                state -> state.fencingTokens.put(orphanPlan.id(), 1L),
+                state -> {
+                    var spec = PersistenceFixtures.workspaceSpec(
+                            "orphan-start");
+                    state.workspaceOwners.put(
+                            spec.workspaceId(),
+                            new InMemoryState.WorkspaceOwner(
+                                    orphanPlan.id(), spec));
+                });
 
         for (Consumer<InMemoryState> occupy : occupiers) {
             InMemoryState state = new InMemoryState(
@@ -812,6 +820,12 @@ class ExecutionStartRepositoryTest {
                         "lease-token-b",
                         takeover.fencingToken(),
                         "after-start");
+        PersistenceFixtures.confirmExecutionContext(
+                scenario.persistence().planExecutionContexts(),
+                scenario.plan(),
+                "lease-token-b",
+                takeover.fencingToken(),
+                PersistenceFixtures.workspaceSpec("start-replay"));
         PersistedStepActivation advanced = scenario.persistence()
                 .stepActivations().activate(activation)
                 .value().orElseThrow();

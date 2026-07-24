@@ -1512,6 +1512,12 @@ class StepActivationRepositoryTest {
                         PersistenceFixtures.executionStartRequest(
                                 plan, TOKEN, lease.fencingToken(),
                                 "start-" + activationEventId)));
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(state),
+                plan,
+                TOKEN,
+                lease.fencingToken(),
+                PersistenceFixtures.workspaceSpec(activationEventId));
         return new Scenario(
                 persistence,
                 state,
@@ -1554,6 +1560,12 @@ class StepActivationRepositoryTest {
                         TOKEN,
                         1,
                         "start-" + startEventId)));
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(state),
+                PersistenceFixtures.plan(),
+                TOKEN,
+                1,
+                PersistenceFixtures.workspaceSpec(startEventId));
         return harness;
     }
 
@@ -1673,7 +1685,12 @@ class StepActivationRepositoryTest {
                 state.checkpoints.get(PersistenceFixtures.PLAN_ID),
                 markers == null ? null : new LinkedHashMap<>(markers),
                 links == null ? null : List.copyOf(links),
-                state.executionMutationHeads.get(PersistenceFixtures.PLAN_ID));
+                state.executionMutationHeads.get(PersistenceFixtures.PLAN_ID),
+                new LinkedHashMap<>(
+                        state.planExecutionContextReservations),
+                new LinkedHashMap<>(
+                        state.planExecutionContextConfirmations),
+                new LinkedHashMap<>(state.workspaceOwners));
     }
 
     private static void assertAuthorityUnchanged(
@@ -1724,6 +1741,18 @@ class StepActivationRepositoryTest {
                 expected.head(),
                 state.executionMutationHeads.get(PersistenceFixtures.PLAN_ID),
                 corruption + " head");
+        assertEquals(
+                expected.contextReservations(),
+                state.planExecutionContextReservations,
+                corruption + " context reservations");
+        assertEquals(
+                expected.contextConfirmations(),
+                state.planExecutionContextConfirmations,
+                corruption + " context confirmations");
+        assertEquals(
+                expected.workspaceOwners(),
+                state.workspaceOwners,
+                corruption + " workspace owners");
     }
 
     private static void assertNullMessage(
@@ -1790,6 +1819,12 @@ class StepActivationRepositoryTest {
             VersionedCheckpoint checkpoint,
             Map<EventId, InMemoryState.StepActivationMarker> markers,
             List<InMemoryState.ExecutionMutationLink> links,
-            InMemoryState.ExecutionMutationHead head) {
+            InMemoryState.ExecutionMutationHead head,
+            Map<PlanId, InMemoryState.PlanExecutionContextReservationMarker>
+                    contextReservations,
+            Map<PlanId, InMemoryState.PlanExecutionContextConfirmationMarker>
+                    contextConfirmations,
+            Map<io.paperagent.v2.contracts.WorkspaceId,
+                    InMemoryState.WorkspaceOwner> workspaceOwners) {
     }
 }

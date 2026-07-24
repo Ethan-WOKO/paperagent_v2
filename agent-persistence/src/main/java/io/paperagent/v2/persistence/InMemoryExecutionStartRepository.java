@@ -56,7 +56,13 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
             if (!hasConsistentBootstrapRoot(plan, taskFrame, bootstrap)
                     || state.executionMutationHeads.containsKey(request.planId())
                     || state.executionMutationLinks.containsKey(request.planId())
-                    || state.stepActivations.containsKey(request.planId())) {
+                    || state.stepActivations.containsKey(request.planId())
+                    || state.planExecutionContextReservations
+                            .containsKey(request.planId())
+                    || state.planExecutionContextConfirmations
+                            .containsKey(request.planId())
+                    || InMemoryPlanExecutionContextAuthority
+                            .hasOwnerReference(state, request.planId())) {
                 return partialState();
             }
 
@@ -145,7 +151,11 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                 || state.fencingTokens.containsKey(planId)
                 || state.executionMutationHeads.containsKey(planId)
                 || state.executionMutationLinks.containsKey(planId)
-                || state.stepActivations.containsKey(planId);
+                || state.stepActivations.containsKey(planId)
+                || state.planExecutionContextReservations.containsKey(planId)
+                || state.planExecutionContextConfirmations.containsKey(planId)
+                || InMemoryPlanExecutionContextAuthority
+                        .hasOwnerReference(state, planId);
     }
 
     private static boolean hasConsistentBootstrapRoot(
