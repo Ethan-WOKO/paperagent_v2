@@ -33,6 +33,7 @@ class PublicBoundaryTest {
                 PlanBootstrapRepository.class,
                 LeaseRepository.class,
                 ExecutionStartRepository.class,
+                ExecutionStartRecoveryRepository.class,
                 IdempotencyRepository.class);
 
         for (Class<?> port : ports) {
@@ -61,6 +62,7 @@ class PublicBoundaryTest {
                 InMemoryPlanBootstrapRepository.class,
                 InMemoryLeaseRepository.class,
                 InMemoryExecutionStartRepository.class,
+                InMemoryExecutionStartRecoveryRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
@@ -195,6 +197,86 @@ class PublicBoundaryTest {
                 ExecutionStartRepository.class,
                 InMemoryPersistence.class
                         .getDeclaredMethod("executionStarts")
+                        .getReturnType());
+    }
+
+    @Test
+    void executionStartRecoverySurfaceIsExactAndTokenFree()
+            throws Exception {
+        Method inspect = Arrays.stream(
+                        ExecutionStartRecoveryRepository.class.getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()))
+                .get("inspect");
+        assertEquals(
+                1,
+                ExecutionStartRecoveryRepository.class
+                        .getDeclaredMethods()
+                        .length);
+        assertMethod(inspect, PersistenceResult.class, PlanId.class);
+
+        assertTrue(ExecutionStartRecoverySnapshot.class.isSealed());
+        Map<String, Method> snapshotMethods = Arrays.stream(
+                        ExecutionStartRecoverySnapshot.class.getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()));
+        assertEquals(Set.of("planId"), snapshotMethods.keySet());
+        assertMethod(snapshotMethods.get("planId"), PlanId.class);
+        assertEquals(
+                Set.of(
+                        PersistedExecutionStartReady.class,
+                        PersistedExecutionStartCommitted.class),
+                Set.of(ExecutionStartRecoverySnapshot.class
+                        .getPermittedSubclasses()));
+        assertEquals(
+                List.of("bootstrap", "currentPlan"),
+                Arrays.stream(
+                                PersistedExecutionStartReady.class
+                                        .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(PersistedPlanBootstrap.class, io.paperagent.v2.contracts.Plan.class),
+                Arrays.stream(
+                                PersistedExecutionStartReady.class
+                                        .getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                List.of("bootstrap", "currentPlan", "executionStart"),
+                Arrays.stream(
+                                PersistedExecutionStartCommitted.class
+                                        .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PersistedPlanBootstrap.class,
+                        io.paperagent.v2.contracts.Plan.class,
+                        PersistedExecutionStart.class),
+                Arrays.stream(
+                                PersistedExecutionStartCommitted.class
+                                        .getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        for (Class<?> snapshot : List.of(
+                PersistedExecutionStartReady.class,
+                PersistedExecutionStartCommitted.class)) {
+            assertTrue(Arrays.stream(snapshot.getRecordComponents())
+                    .noneMatch(component ->
+                            component.getType() == ExecutionStartRequest.class
+                                    || component.getType() == LeaseRecord.class));
+            assertTrue(Arrays.stream(snapshot.getDeclaredFields())
+                    .noneMatch(field ->
+                            field.getType() == ExecutionStartRequest.class
+                                    || field.getType() == LeaseRecord.class));
+        }
+        assertEquals(
+                ExecutionStartRecoveryRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("executionStartRecovery")
                         .getReturnType());
     }
 

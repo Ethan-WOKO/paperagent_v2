@@ -12,6 +12,7 @@ public final class InMemoryPersistence {
     private final PlanBootstrapRepository planBootstraps;
     private final LeaseRepository leases;
     private final ExecutionStartRepository executionStarts;
+    private final ExecutionStartRecoveryRepository executionStartRecovery;
     private final IdempotencyRepository idempotency;
 
     public InMemoryPersistence() {
@@ -29,6 +30,7 @@ public final class InMemoryPersistence {
         planBootstraps = new InMemoryPlanBootstrapRepository(state);
         leases = new InMemoryLeaseRepository(state);
         executionStarts = new InMemoryExecutionStartRepository(state);
+        executionStartRecovery = new InMemoryExecutionStartRecoveryRepository(state);
         idempotency = new InMemoryIdempotencyRepository(state);
     }
 
@@ -62,6 +64,10 @@ public final class InMemoryPersistence {
 
     public ExecutionStartRepository executionStarts() {
         return executionStarts;
+    }
+
+    public ExecutionStartRecoveryRepository executionStartRecovery() {
+        return executionStartRecovery;
     }
 
     public IdempotencyRepository idempotency() {
