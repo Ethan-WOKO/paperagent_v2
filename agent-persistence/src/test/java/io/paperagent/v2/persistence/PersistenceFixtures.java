@@ -213,6 +213,62 @@ final class PersistenceFixtures {
                 startedCheckpoint(plan));
     }
 
+    static StepActivationRequest stepActivationRequest(
+            Plan plan,
+            String leaseToken,
+            long fencingToken,
+            String eventId) {
+        Checkpoint source = startedCheckpoint(plan);
+        return stepActivationRequest(
+                plan,
+                source,
+                2,
+                1,
+                leaseToken,
+                fencingToken,
+                STEP_1,
+                eventId,
+                3);
+    }
+
+    static StepActivationRequest stepActivationRequest(
+            Plan plan,
+            Checkpoint source,
+            long expectedCheckpointVersion,
+            long expectedEventHead,
+            String leaseToken,
+            long fencingToken,
+            PlanStepId stepId,
+            String eventId,
+            long eventSequence) {
+        EventEnvelope event =
+                event(eventId, plan.taskFrameId(), plan.id(), eventSequence);
+        Map<PlanStepId, StepExecutionState> states =
+                new LinkedHashMap<>(source.stepStates());
+        states.put(stepId, StepExecutionState.ACTIVE);
+        Checkpoint target = new Checkpoint(
+                source.taskFrameId(),
+                source.planId(),
+                source.revisionId(),
+                source.revisionNumber(),
+                eventSequence,
+                PlanExecutionState.ACTIVE,
+                states,
+                source.receiptReferences(),
+                source.createdAt().plusSeconds(1));
+        return new StepActivationRequest(
+                plan.id(),
+                leaseToken,
+                fencingToken,
+                plan.latestRevision().id(),
+                plan.latestRevision().number(),
+                expectedCheckpointVersion,
+                expectedEventHead,
+                stepId,
+                event,
+                target);
+    }
+
     static InMemoryPersistence bootstrappedPersistence(Clock leaseClock) {
         InMemoryPersistence persistence = new InMemoryPersistence(leaseClock);
         requireApplied(persistence.planBootstraps().bootstrap(

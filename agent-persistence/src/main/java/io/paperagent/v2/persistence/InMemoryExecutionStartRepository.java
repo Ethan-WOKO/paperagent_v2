@@ -13,6 +13,7 @@ import io.paperagent.v2.contracts.TaskFrame;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
@@ -52,7 +53,10 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
             PersistedPlanBootstrap bootstrap =
                     state.planBootstraps.get(request.planId());
             TaskFrame taskFrame = state.taskFrames.get(plan.taskFrameId());
-            if (!hasConsistentBootstrapRoot(plan, taskFrame, bootstrap)) {
+            if (!hasConsistentBootstrapRoot(plan, taskFrame, bootstrap)
+                    || state.executionMutationHeads.containsKey(request.planId())
+                    || state.executionMutationLinks.containsKey(request.planId())
+                    || state.stepActivations.containsKey(request.planId())) {
                 return partialState();
             }
 
@@ -121,6 +125,12 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
             state.eventsById.put(request.startEvent().id(), request.startEvent());
             state.checkpoints.put(request.planId(), started);
             state.executionStarts.put(request.planId(), committedMarker);
+            state.executionMutationHeads.put(
+                    request.planId(),
+                    InMemoryStepActivationRepository.headFromStart(result));
+            state.executionMutationLinks.put(request.planId(), List.of());
+            state.stepActivations.put(
+                    request.planId(), new LinkedHashMap<>());
             return PersistenceResult.applied(result);
         }
     }
@@ -132,7 +142,10 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                 || state.eventsById.values().stream()
                         .anyMatch(event -> event.planId().equals(planId))
                 || state.leases.containsKey(planId)
-                || state.fencingTokens.containsKey(planId);
+                || state.fencingTokens.containsKey(planId)
+                || state.executionMutationHeads.containsKey(planId)
+                || state.executionMutationLinks.containsKey(planId)
+                || state.stepActivations.containsKey(planId);
     }
 
     private static boolean hasConsistentBootstrapRoot(

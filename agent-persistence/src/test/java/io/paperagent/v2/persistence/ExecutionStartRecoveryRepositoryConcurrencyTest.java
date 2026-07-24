@@ -128,9 +128,14 @@ class ExecutionStartRecoveryRepositoryConcurrencyTest {
                                     "committed-revision-2",
                                     "committed race")));
             assertEquals(
-                    PersistenceOutcome.APPLIED,
+                    PersistenceOutcome.REJECTED,
                     committedRace.second().outcome());
-            assertCommittedOrAdvanced(committedRace.first());
+            assertEquals(
+                    PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                    committedRace.second().failure().orElseThrow().code());
+            assertSnapshot(
+                    committedRace.first(),
+                    PersistedExecutionStartCommitted.class);
         }
     }
 
@@ -185,14 +190,17 @@ class ExecutionStartRecoveryRepositoryConcurrencyTest {
 
             InMemoryPersistence advancedPersistence = bootstrapped();
             String advancedToken = "advanced-lease-token-" + iteration;
-            start(
+            PersistedExecutionStart advancedStart = start(
                     advancedPersistence,
                     PersistenceFixtures.plan(),
                     advancedToken,
                     "advanced-lease-event-" + iteration);
-            requireApplied(advancedPersistence.events().append(
-                    PersistenceFixtures.event(
-                            "advanced-progress-" + iteration, 3)));
+            requireApplied(advancedPersistence.stepActivations().activate(
+                    PersistenceFixtures.stepActivationRequest(
+                            PersistenceFixtures.plan(),
+                            advancedToken,
+                            advancedStart.fencingToken(),
+                            "advanced-progress-" + iteration)));
             RaceResult<
                     PersistenceResult<ExecutionStartRecoverySnapshot>,
                     PersistenceResult<LeaseRecord>> advancedRace = race(
@@ -212,7 +220,7 @@ class ExecutionStartRecoveryRepositoryConcurrencyTest {
             throws Exception {
         for (int iteration = 0; iteration < 20; iteration++) {
             InMemoryPersistence persistence = bootstrapped();
-            start(
+            PersistedExecutionStart progressStart = start(
                     persistence,
                     PersistenceFixtures.plan(),
                     "progress-token-" + iteration,
@@ -225,19 +233,14 @@ class ExecutionStartRecoveryRepositoryConcurrencyTest {
                     () -> persistence.executionStartRecovery()
                             .inspect(PersistenceFixtures.PLAN_ID),
                     () -> {
-                        requireApplied(persistence.events().append(
-                                PersistenceFixtures.event(
-                                        "progress-event-" + suffix, 3)));
-                        requireApplied(persistence.checkpoints().save(
-                                2,
-                                progressedCheckpoint(
-                                        PersistenceFixtures.plan(), 3)));
-                        requireApplied(persistence.plans().appendRevision(
-                                PersistenceFixtures.PLAN_ID,
-                                1,
-                                PersistenceFixtures.revision2(
-                                        "progress-revision-2",
-                                        "legal progress")));
+                        requireApplied(
+                                persistence.stepActivations().activate(
+                                        PersistenceFixtures
+                                                .stepActivationRequest(
+                                                        PersistenceFixtures.plan(),
+                                                        "progress-token-" + suffix,
+                                                        progressStart.fencingToken(),
+                                                        "progress-event-" + suffix)));
                         return true;
                     });
 

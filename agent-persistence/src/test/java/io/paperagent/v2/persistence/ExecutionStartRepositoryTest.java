@@ -806,29 +806,15 @@ class ExecutionStartRepositoryTest {
                         PersistenceFixtures.T0.plusSeconds(30))
                 .value().orElseThrow();
         assertEquals(2, takeover.fencingToken());
-        scenario.persistence().events().append(PersistenceFixtures.event(
-                "after-start",
-                scenario.plan().taskFrameId(),
-                scenario.plan().id(),
-                2));
-        Checkpoint advanced = checkpoint(
-                scenario.request().startedCheckpoint(),
-                scenario.plan().taskFrameId(),
-                scenario.plan().id(),
-                scenario.plan().latestRevision().id(),
-                scenario.plan().latestRevision().number(),
-                2,
-                PlanExecutionState.ACTIVE,
-                scenario.request().startedCheckpoint().stepStates(),
-                List.of(),
-                PersistenceFixtures.T0.plusSeconds(2));
-        assertEquals(
-                PersistenceOutcome.APPLIED,
-                scenario.persistence().checkpoints().save(2, advanced).outcome());
-        scenario.persistence().plans().appendRevision(
-                scenario.plan().id(),
-                1,
-                PersistenceFixtures.revision2("revision-after-start", "downstream"));
+        StepActivationRequest activation =
+                PersistenceFixtures.stepActivationRequest(
+                        scenario.plan(),
+                        "lease-token-b",
+                        takeover.fencingToken(),
+                        "after-start");
+        PersistedStepActivation advanced = scenario.persistence()
+                .stepActivations().activate(activation)
+                .value().orElseThrow();
         scenario.persistence().leases().release(
                 scenario.plan().id(), "lease-token-b");
 
@@ -840,7 +826,7 @@ class ExecutionStartRepositoryTest {
         assertEquals(original, replay.value().orElseThrow());
         assertEquals(observations, scenario.clock().observationCount());
         assertEquals(
-                new VersionedCheckpoint(3, advanced),
+                advanced.activatedCheckpoint(),
                 scenario.persistence().checkpoints()
                         .find(scenario.plan().id()).value().orElseThrow());
     }

@@ -64,18 +64,26 @@ final class InMemoryPlanRepository implements PlanRepository {
         }
         synchronized (state.monitor) {
             Plan current = state.plans.get(planId);
-            if (current == null) {
-                return PersistenceChecks.notFound("planId");
-            }
-            PlanRevision existing = current.revisions().stream()
-                    .filter(candidate -> candidate.id().equals(revision.id()))
-                    .findFirst()
-                    .orElse(null);
+            PlanRevision existing = current == null
+                    ? null
+                    : current.revisions().stream()
+                            .filter(candidate ->
+                                    candidate.id().equals(revision.id()))
+                            .findFirst()
+                            .orElse(null);
             if (existing != null) {
                 return existing.equals(revision)
                         ? PersistenceResult.replayed(current)
                         : PersistenceResult.rejected(
                                 PersistenceErrorCode.CONFLICTING_REPLAY, "revision.id");
+            }
+            if (state.executionStarts.containsKey(planId)) {
+                return PersistenceResult.rejected(
+                        PersistenceErrorCode.EXECUTION_MUTATION_REQUIRES_FENCE,
+                        "planId");
+            }
+            if (current == null) {
+                return PersistenceChecks.notFound("planId");
             }
             if (current.latestRevision().number() != expectedCurrentRevisionNumber) {
                 return PersistenceResult.rejected(

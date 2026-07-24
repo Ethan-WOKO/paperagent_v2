@@ -34,6 +34,7 @@ class PublicBoundaryTest {
                 LeaseRepository.class,
                 ExecutionStartRepository.class,
                 ExecutionStartRecoveryRepository.class,
+                StepActivationRepository.class,
                 IdempotencyRepository.class);
 
         for (Class<?> port : ports) {
@@ -63,6 +64,7 @@ class PublicBoundaryTest {
                 InMemoryLeaseRepository.class,
                 InMemoryExecutionStartRepository.class,
                 InMemoryExecutionStartRecoveryRepository.class,
+                InMemoryStepActivationRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
@@ -277,6 +279,82 @@ class PublicBoundaryTest {
                 ExecutionStartRecoveryRepository.class,
                 InMemoryPersistence.class
                         .getDeclaredMethod("executionStartRecovery")
+                        .getReturnType());
+    }
+
+    @Test
+    void stepActivationSurfaceIsExactAndTokenFreeInResult()
+            throws Exception {
+        assertTrue(StepActivationRepository.class.isInterface());
+        assertEquals(
+                1,
+                StepActivationRepository.class.getDeclaredMethods().length);
+        assertMethod(
+                StepActivationRepository.class.getDeclaredMethod(
+                        "activate", StepActivationRequest.class),
+                PersistenceResult.class,
+                StepActivationRequest.class);
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "expectedRevisionId",
+                        "expectedRevisionNumber",
+                        "expectedCheckpointVersion",
+                        "expectedEventHeadSequence",
+                        "stepId",
+                        "activationEvent",
+                        "activatedCheckpoint"),
+                Arrays.stream(StepActivationRequest.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        io.paperagent.v2.contracts.PlanRevisionId.class,
+                        long.class,
+                        long.class,
+                        long.class,
+                        io.paperagent.v2.contracts.PlanStepId.class,
+                        EventEnvelope.class,
+                        io.paperagent.v2.contracts.Checkpoint.class),
+                Arrays.stream(StepActivationRequest.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "stepId",
+                        "leaseOwnerId",
+                        "fencingToken",
+                        "activationEvent",
+                        "activatedCheckpoint"),
+                Arrays.stream(PersistedStepActivation.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        io.paperagent.v2.contracts.PlanStepId.class,
+                        String.class,
+                        long.class,
+                        EventEnvelope.class,
+                        VersionedCheckpoint.class),
+                Arrays.stream(PersistedStepActivation.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertTrue(Arrays.stream(PersistedStepActivation.class.getRecordComponents())
+                .noneMatch(component ->
+                        component.getName().equals("leaseToken")
+                                || component.getType()
+                                        == StepActivationRequest.class));
+        assertEquals(
+                StepActivationRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("stepActivations")
                         .getReturnType());
     }
 
