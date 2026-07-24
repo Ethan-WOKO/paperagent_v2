@@ -26,6 +26,21 @@ class RuntimeModuleBoundaryTest {
             "import io.paperagent.v2.persistence.PersistedPlanBootstrap;",
             "import io.paperagent.v2.persistence.PersistenceOutcome;",
             "import io.paperagent.v2.persistence.PersistenceFailure;");
+    private static final Set<String>
+            ALLOWED_EXECUTION_START_PERSISTENCE_IMPORTS = Set.of(
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRequest;",
+                    "import io.paperagent.v2.persistence.LeaseRecord;",
+                    "import io.paperagent.v2.persistence.LeaseRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStart;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedPlanBootstrap;",
+                    "import io.paperagent.v2.persistence.PersistenceFailure;",
+                    "import io.paperagent.v2.persistence.PersistenceOutcome;",
+                    "import io.paperagent.v2.persistence.PersistenceResult;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             "io.paperagent.v2.workspace",
@@ -159,6 +174,14 @@ class RuntimeModuleBoundaryTest {
                 "runtime",
                 "execution",
                 "Gate.java"));
+        Path executionStartSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "start",
+                "Starter.java"));
         Path otherRuntimeSource = sourceRoot.resolve(Path.of(
                 "io",
                 "paperagent",
@@ -175,6 +198,13 @@ class RuntimeModuleBoundaryTest {
             assertTrue(allowedPersistenceImports(sourceRoot, executionSource)
                     .contains(allowed));
         }
+        for (String allowed
+                : ALLOWED_EXECUTION_START_PERSISTENCE_IMPORTS) {
+            assertTrue(
+                    allowedPersistenceImports(
+                            sourceRoot,
+                            executionStartSource).contains(allowed));
+        }
 
         assertFalse(allowedPersistenceImports(sourceRoot, bootstrapSource)
                 .contains(
@@ -185,6 +215,18 @@ class RuntimeModuleBoundaryTest {
         assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
                 .contains(
                         "import io.paperagent.v2.persistence.InMemoryPersistence;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
+                .contains(
+                        "import io.paperagent.v2.persistence.LeaseRepository;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
+                .contains(
+                        "import io.paperagent.v2.persistence"
+                                + ".ExecutionStartRepository;"));
+        assertFalse(
+                allowedPersistenceImports(sourceRoot, executionStartSource)
+                        .contains(
+                                "import io.paperagent.v2.persistence"
+                                        + ".InMemoryPersistence;"));
         assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
                 .contains("import io.paperagent.v2.persistence.*;"));
         assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
@@ -237,11 +279,27 @@ class RuntimeModuleBoundaryTest {
                 Path.of("io", "paperagent", "v2", "runtime", "execution"));
     }
 
+    private static boolean isExecutionStartSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "start"));
+    }
+
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
         if (isBootstrapSource(sourceRoot, sourcePath)) {
             return ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS;
+        }
+        if (isExecutionStartSource(sourceRoot, sourcePath)) {
+            return ALLOWED_EXECUTION_START_PERSISTENCE_IMPORTS;
         }
         if (isExecutionSource(sourceRoot, sourcePath)) {
             return ALLOWED_EXECUTION_PERSISTENCE_IMPORTS;
