@@ -127,7 +127,7 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
             state.executionStarts.put(request.planId(), committedMarker);
             state.executionMutationHeads.put(
                     request.planId(),
-                    InMemoryStepActivationRepository.headFromStart(result));
+                    InMemoryExecutionMutationAuthority.headFromStart(result));
             state.executionMutationLinks.put(request.planId(), List.of());
             state.stepActivations.put(
                     request.planId(), new LinkedHashMap<>());

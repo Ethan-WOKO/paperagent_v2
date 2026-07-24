@@ -34,14 +34,22 @@ class StepActivationRepositoryBoundaryTest {
         }
         assertEquals(1, implementations);
 
-        String source = Files.readString(sourceRoot.resolve(
+        String activationSource = Files.readString(sourceRoot.resolve(
                 Path.of(
                         "io",
                         "paperagent",
                         "v2",
                         "persistence",
                         "InMemoryStepActivationRepository.java")));
-        String normalizedSource = source.replaceAll("\\s+", " ");
+        String authoritySource = Files.readString(sourceRoot.resolve(
+                Path.of(
+                        "io",
+                        "paperagent",
+                        "v2",
+                        "persistence",
+                        "InMemoryExecutionMutationAuthority.java")));
+        String normalizedAuthority =
+                authoritySource.replaceAll("\\s+", " ");
         for (String forbidden : List.of(
                 "PlanRepository",
                 "EventRepository",
@@ -61,13 +69,16 @@ class StepActivationRepositoryBoundaryTest {
                 "setAccessible",
                 "Random",
                 "UUID")) {
-            assertFalse(source.contains(forbidden), forbidden);
+            assertFalse(activationSource.contains(forbidden), forbidden);
+            assertFalse(authoritySource.contains(forbidden), forbidden);
         }
-        assertTrue(source.contains("state.observeLeaseTime()"));
-        assertFalse(source.contains("Clock"));
-        assertTrue(normalizedSource.contains("current.version() < 2"));
-        assertFalse(normalizedSource.contains("current.version() == 2"));
-        assertFalse(normalizedSource.contains("current.version() != 2"));
+        assertTrue(activationSource.contains("state.observeLeaseTime()"));
+        assertFalse(activationSource.contains("Clock"));
+        assertFalse(authoritySource.contains("observeLeaseTime"));
+        assertFalse(authoritySource.contains("Clock"));
+        assertTrue(normalizedAuthority.contains("current.version() < 2"));
+        assertFalse(normalizedAuthority.contains("current.version() == 2"));
+        assertFalse(normalizedAuthority.contains("current.version() != 2"));
     }
 
     @Test
@@ -78,10 +89,36 @@ class StepActivationRepositoryBoundaryTest {
                 InMemoryState.ExecutionMutationLink.class,
                 InMemoryState.ExecutionMutationMarkerIdentity.class,
                 InMemoryState.StepActivationMarker.class,
-                InMemoryStepActivationRepository.AuthoritativeSource.class)) {
+                InMemoryExecutionMutationAuthority.class,
+                InMemoryExecutionMutationAuthority.AuthoritativeSource.class)) {
             assertFalse(java.lang.reflect.Modifier.isPublic(
                     type.getModifiers()));
         }
+        for (var method :
+                InMemoryExecutionMutationAuthority.class.getDeclaredMethods()) {
+            assertFalse(java.lang.reflect.Modifier.isPublic(
+                    method.getModifiers()));
+        }
+        assertTrue(java.lang.reflect.Modifier.isPrivate(
+                InMemoryExecutionMutationAuthority.class
+                        .getDeclaredConstructors()[0]
+                        .getModifiers()));
+        assertEquals(
+                List.of(
+                        "taskFrame",
+                        "plan",
+                        "checkpoint",
+                        "eventHeadSequence",
+                        "head",
+                        "eventStream",
+                        "links",
+                        "activationMarkers"),
+                java.util.Arrays.stream(
+                                InMemoryExecutionMutationAuthority
+                                        .AuthoritativeSource.class
+                                        .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
         String resultFields = java.util.Arrays.stream(
                         PersistedStepActivation.class.getDeclaredFields())
                 .map(field -> field.getType().getName())

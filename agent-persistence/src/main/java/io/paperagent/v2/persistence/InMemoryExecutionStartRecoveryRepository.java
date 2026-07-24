@@ -29,7 +29,8 @@ final class InMemoryExecutionStartRecoveryRepository
             return PersistenceChecks.invalid("planId");
         }
         synchronized (state.monitor) {
-            if (!hasPlanScopedOccupancy(planId)) {
+            if (!InMemoryExecutionMutationAuthority
+                    .hasPlanScopedOccupancy(state, planId)) {
                 return PersistenceChecks.notFound("planId");
             }
 
@@ -50,8 +51,8 @@ final class InMemoryExecutionStartRecoveryRepository
 
             InMemoryState.ExecutionStartMarker marker =
                     state.executionStarts.get(planId);
-            InMemoryStepActivationRepository.AuthoritativeSource source =
-                    InMemoryStepActivationRepository
+            InMemoryExecutionMutationAuthority.AuthoritativeSource source =
+                    InMemoryExecutionMutationAuthority
                             .validateAuthoritativeSource(state, planId);
             if (source == null) {
                 return partialState();
@@ -70,22 +71,6 @@ final class InMemoryExecutionStartRecoveryRepository
             }
             return partialState();
         }
-    }
-
-    private boolean hasPlanScopedOccupancy(PlanId planId) {
-        return state.plans.containsKey(planId)
-                || state.checkpoints.containsKey(planId)
-                || state.eventStreams.containsKey(planId)
-                || state.eventsById.values().stream()
-                        .anyMatch(event ->
-                                event != null && planId.equals(event.planId()))
-                || state.planBootstraps.containsKey(planId)
-                || state.executionStarts.containsKey(planId)
-                || state.executionMutationHeads.containsKey(planId)
-                || state.executionMutationLinks.containsKey(planId)
-                || state.stepActivations.containsKey(planId)
-                || state.leases.containsKey(planId)
-                || state.fencingTokens.containsKey(planId);
     }
 
     private boolean hasConsistentBootstrapRoot(
