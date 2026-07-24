@@ -17,6 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RuntimeModuleBoundaryTest {
     private static final String PERSISTENCE_PREFIX =
             "io.paperagent.v2.persistence";
+    private static final String WORKSPACE_PREFIX =
+            "io.paperagent.v2.workspace";
     private static final Set<String> ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS = Set.of(
             "import io.paperagent.v2.persistence.PlanBootstrapRepository;",
             "import io.paperagent.v2.persistence.PersistenceResult;",
@@ -71,9 +73,48 @@ class RuntimeModuleBoundaryTest {
                             + ".PersistenceOutcome;",
                     "import io.paperagent.v2.persistence"
                             + ".PersistenceResult;");
+    private static final Set<String>
+            ALLOWED_CONTEXT_COMPOSITION_PERSISTENCE_IMPORTS = Set.of(
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRecoveryRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".ExecutionStartRecoverySnapshot;",
+                    "import io.paperagent.v2.persistence.LeaseRecord;",
+                    "import io.paperagent.v2.persistence.LeaseRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStartCommitted;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStartReady;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedPlanExecutionContextConfirmed;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedPlanExecutionContextReserved;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceErrorCode;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceFailure;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceOutcome;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceResult;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PlanExecutionContextConfirmationRequest;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PlanExecutionContextRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PlanExecutionContextReservationRequest;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PlanExecutionContextSnapshot;");
+    private static final Set<String>
+            ALLOWED_CONTEXT_COMPOSITION_WORKSPACE_IMPORTS = Set.of(
+                    "import io.paperagent.v2.workspace"
+                            + ".VerifiedWorkspaceMaterialization;",
+                    "import io.paperagent.v2.workspace.WorkspaceErrorCode;",
+                    "import io.paperagent.v2.workspace.WorkspaceException;",
+                    "import io.paperagent.v2.workspace.WorkspacePort;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
-            "io.paperagent.v2.workspace",
+            WORKSPACE_PREFIX,
             "io.paperagent.v2.sandbox",
             "io.paperagent.v2.providers",
             "io.paperagent.v2.app",
@@ -106,7 +147,8 @@ class RuntimeModuleBoundaryTest {
             "Thread.sleep");
 
     @Test
-    void productionDependsOnlyOnContractsPersistenceAndJdk() throws Exception {
+    void productionDependsOnlyOnFrozenRuntimeDependenciesAndJdk()
+            throws Exception {
         Path module = moduleDirectory();
         var document = DocumentBuilderFactory.newInstance()
                 .newDocumentBuilder()
@@ -127,7 +169,8 @@ class RuntimeModuleBoundaryTest {
         assertEquals(
                 List.of(
                         "io.paperagent.v2:agent-contracts",
-                        "io.paperagent.v2:agent-persistence"),
+                        "io.paperagent.v2:agent-persistence",
+                        "io.paperagent.v2:agent-workspace"),
                 productionDependencies);
         assertEquals(List.of("org.junit.jupiter:junit-jupiter"), testDependencies);
 
@@ -139,6 +182,8 @@ class RuntimeModuleBoundaryTest {
                     .toList()) {
                 Set<String> allowedPersistenceImports =
                         allowedPersistenceImports(sourceRoot, sourcePath);
+                Set<String> allowedWorkspaceImports =
+                        allowedWorkspaceImports(sourceRoot, sourcePath);
                 for (String line : Files.readAllLines(sourcePath)) {
                     String trimmed = line.trim();
                     if (trimmed.startsWith("import ")) {
@@ -148,7 +193,8 @@ class RuntimeModuleBoundaryTest {
                                                 "import io.paperagent.v2.contracts.")
                                         || trimmed.startsWith(
                                                 "import io.paperagent.v2.runtime.")
-                                        || allowedPersistenceImports.contains(trimmed),
+                                        || allowedPersistenceImports.contains(trimmed)
+                                        || allowedWorkspaceImports.contains(trimmed),
                                 () -> sourcePath + " crosses production boundary: " + trimmed);
                     }
                 }
@@ -165,7 +211,8 @@ class RuntimeModuleBoundaryTest {
                     .toList()) {
                 String source = Files.readString(sourcePath).toLowerCase();
                 for (String marker : FORBIDDEN_SOURCE_MARKERS) {
-                    if (marker.equals(PERSISTENCE_PREFIX)) {
+                    if (marker.equals(PERSISTENCE_PREFIX)
+                            || marker.equals(WORKSPACE_PREFIX)) {
                         continue;
                     }
                     assertFalse(
@@ -180,6 +227,17 @@ class RuntimeModuleBoundaryTest {
                                         .contains(trimmed),
                                 () -> sourcePath
                                         + " contains non-allowlisted persistence reference: "
+                                        + trimmed);
+                    }
+                    if (line.contains(WORKSPACE_PREFIX)) {
+                        String trimmed = line.trim();
+                        assertTrue(
+                                allowedWorkspaceImports(
+                                        sourceRoot,
+                                        sourcePath).contains(trimmed),
+                                () -> sourcePath
+                                        + " contains non-allowlisted"
+                                        + " workspace reference: "
                                         + trimmed);
                     }
                 }
@@ -230,6 +288,15 @@ class RuntimeModuleBoundaryTest {
                 "recovery",
                 "composition",
                 "Recoverer.java"));
+        Path contextCompositionSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "context",
+                "composition",
+                "Composer.java"));
         Path otherRuntimeSource = sourceRoot.resolve(Path.of(
                 "io",
                 "paperagent",
@@ -263,6 +330,20 @@ class RuntimeModuleBoundaryTest {
                 allowedPersistenceImports(
                         sourceRoot,
                         recoveryCompositionSource));
+        assertEquals(
+                ALLOWED_CONTEXT_COMPOSITION_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(
+                        sourceRoot,
+                        contextCompositionSource));
+        assertEquals(
+                ALLOWED_CONTEXT_COMPOSITION_WORKSPACE_IMPORTS,
+                allowedWorkspaceImports(
+                        sourceRoot,
+                        contextCompositionSource));
+        assertTrue(
+                allowedWorkspaceImports(
+                        sourceRoot,
+                        recoveryCompositionSource).isEmpty());
 
         assertFalse(allowedPersistenceImports(sourceRoot, bootstrapSource)
                 .contains(
@@ -397,9 +478,26 @@ class RuntimeModuleBoundaryTest {
                 "composition"));
     }
 
+    private static boolean isContextCompositionSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "context",
+                "composition"));
+    }
+
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
+        if (isContextCompositionSource(sourceRoot, sourcePath)) {
+            return ALLOWED_CONTEXT_COMPOSITION_PERSISTENCE_IMPORTS;
+        }
         if (isBootstrapSource(sourceRoot, sourcePath)) {
             return ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS;
         }
@@ -416,6 +514,14 @@ class RuntimeModuleBoundaryTest {
             return ALLOWED_EXECUTION_PERSISTENCE_IMPORTS;
         }
         return Set.of();
+    }
+
+    private static Set<String> allowedWorkspaceImports(
+            Path sourceRoot,
+            Path sourcePath) {
+        return isContextCompositionSource(sourceRoot, sourcePath)
+                ? ALLOWED_CONTEXT_COMPOSITION_WORKSPACE_IMPORTS
+                : Set.of();
     }
 
     private static Path moduleDirectory() {
