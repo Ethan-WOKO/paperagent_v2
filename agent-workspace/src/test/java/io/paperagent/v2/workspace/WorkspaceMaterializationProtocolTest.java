@@ -16,6 +16,8 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -941,6 +943,390 @@ class WorkspaceMaterializationProtocolTest {
         assertFalse(Files.exists(pending(root, spec.workspaceId())));
     }
 
+    @Test
+    void falseExistsAndFalseNotExistsIsPartialAcrossUnknownStateOperations()
+            throws Exception {
+        WorkspaceMaterializationSpec materializationSpec =
+                spec("indeterminate-unknown");
+        Path unknownFinal =
+                container(root, materializationSpec.workspaceId());
+        Files.createDirectory(unknownFinal);
+        AtomicInteger loads = new AtomicInteger();
+        AtomicInteger writes = new AtomicInteger();
+        AtomicInteger publishes = new AtomicInteger();
+        AtomicInteger deletes = new AtomicInteger();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                root,
+                ignored -> {
+                    loads.incrementAndGet();
+                    return snapshot(file("paper.txt", "paper"));
+                },
+                (target, content, options) -> {
+                    writes.incrementAndGet();
+                    Files.write(target, content, options);
+                },
+                (pending, target) -> {
+                    publishes.incrementAndGet();
+                    LocalWorkspaceProvider.defaultPublish(pending, target);
+                },
+                target -> {
+                    deletes.incrementAndGet();
+                    LocalWorkspaceProvider.deleteTree(target);
+                },
+                new DelegatingPathProbe() {
+                    @Override
+                    public boolean exists(Path path) {
+                        return path.equals(unknownFinal)
+                                ? false
+                                : super.exists(path);
+                    }
+
+                    @Override
+                    public boolean notExists(Path path) {
+                        return path.equals(unknownFinal)
+                                ? false
+                                : super.notExists(path);
+                    }
+                });
+        WorkspaceRef workspace = new WorkspaceRef(
+                materializationSpec.workspaceId(),
+                materializationSpec.sourceProjectVersion());
+
+        assertOpaqueCode(
+                WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                () -> provider.materialize(materializationSpec),
+                unknownFinal);
+        assertOpaqueCode(
+                WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                () -> provider.inspectMaterialization(materializationSpec),
+                unknownFinal);
+        assertOpaqueCode(
+                WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                () -> provider.cleanup(workspace),
+                unknownFinal);
+        assertOpaqueCode(
+                WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                () -> provider.list(workspace),
+                unknownFinal);
+
+        assertEquals(0, loads.get());
+        assertEquals(0, writes.get());
+        assertEquals(0, publishes.get());
+        assertEquals(0, deletes.get());
+        assertTrue(Files.isDirectory(unknownFinal));
+    }
+
+    @Test
+    void contradictoryAndThrowingAbsenceSignalsAreAlwaysPartialBeforeWork()
+            throws Exception {
+        for (String mode : List.of(
+                "contradictory",
+                "exists-runtime",
+                "not-exists-runtime")) {
+            Path providerRoot = root.resolve(mode);
+            Files.createDirectory(providerRoot);
+            WorkspaceMaterializationSpec materializationSpec =
+                    spec(mode);
+            Path finalContainer =
+                    container(providerRoot, materializationSpec.workspaceId());
+            AtomicInteger loads = new AtomicInteger();
+            AtomicInteger writes = new AtomicInteger();
+            AtomicInteger publishes = new AtomicInteger();
+            AtomicInteger deletes = new AtomicInteger();
+            LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                    providerRoot,
+                    ignored -> {
+                        loads.incrementAndGet();
+                        return snapshot(file("paper.txt", "paper"));
+                    },
+                    (target, content, options) -> {
+                        writes.incrementAndGet();
+                        Files.write(target, content, options);
+                    },
+                    (pending, target) -> {
+                        publishes.incrementAndGet();
+                        LocalWorkspaceProvider.defaultPublish(pending, target);
+                    },
+                    target -> {
+                        deletes.incrementAndGet();
+                        LocalWorkspaceProvider.deleteTree(target);
+                    },
+                    new DelegatingPathProbe() {
+                        @Override
+                        public boolean exists(Path path) {
+                            if (path.equals(finalContainer)
+                                    && mode.equals("exists-runtime")) {
+                                throw new IllegalStateException(
+                                        "sensitive exists failure");
+                            }
+                            if (path.equals(finalContainer)
+                                    && mode.equals("contradictory")) {
+                                return true;
+                            }
+                            return super.exists(path);
+                        }
+
+                        @Override
+                        public boolean notExists(Path path) {
+                            if (path.equals(finalContainer)
+                                    && mode.equals("not-exists-runtime")) {
+                                throw new IllegalStateException(
+                                        "sensitive notExists failure");
+                            }
+                            if (path.equals(finalContainer)
+                                    && mode.equals("contradictory")) {
+                                return true;
+                            }
+                            return super.notExists(path);
+                        }
+                    });
+
+            assertOpaqueCode(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    () -> provider.materialize(materializationSpec),
+                    finalContainer);
+            assertEquals(0, loads.get(), mode);
+            assertEquals(0, writes.get(), mode);
+            assertEquals(0, publishes.get(), mode);
+            assertEquals(0, deletes.get(), mode);
+        }
+    }
+
+    @Test
+    void definiteLinkWinsOverIndeterminateOtherWorkspacePathInBothPositions()
+            throws Exception {
+        for (boolean linkIsContainer : List.of(false, true)) {
+            Path providerRoot =
+                    root.resolve(linkIsContainer
+                            ? "container-link"
+                            : "pending-link");
+            Files.createDirectory(providerRoot);
+            WorkspaceMaterializationSpec materializationSpec =
+                    spec(linkIsContainer
+                            ? "container-link-priority"
+                            : "pending-link-priority");
+            Path finalContainer =
+                    container(providerRoot, materializationSpec.workspaceId());
+            Path pendingContainer =
+                    pending(providerRoot, materializationSpec.workspaceId());
+            Path linkPath =
+                    linkIsContainer ? finalContainer : pendingContainer;
+            Path indeterminatePath =
+                    linkIsContainer ? pendingContainer : finalContainer;
+            AtomicInteger linkAttributeReads = new AtomicInteger();
+            AtomicInteger indeterminateExistsProbes =
+                    new AtomicInteger();
+            AtomicInteger loads = new AtomicInteger();
+            LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                    providerRoot,
+                    ignored -> {
+                        loads.incrementAndGet();
+                        return snapshot(file("paper.txt", "paper"));
+                    },
+                    Files::write,
+                    LocalWorkspaceProvider::defaultPublish,
+                    LocalWorkspaceProvider::deleteTree,
+                    new DelegatingPathProbe() {
+                        @Override
+                        public boolean exists(Path path) {
+                            if (path.equals(linkPath)) {
+                                return true;
+                            }
+                            if (path.equals(indeterminatePath)) {
+                                indeterminateExistsProbes.incrementAndGet();
+                                return false;
+                            }
+                            return super.exists(path);
+                        }
+
+                        @Override
+                        public boolean notExists(Path path) {
+                            if (path.equals(linkPath)
+                                    || path.equals(indeterminatePath)) {
+                                return false;
+                            }
+                            return super.notExists(path);
+                        }
+
+                        @Override
+                        public BasicFileAttributes readAttributes(Path path)
+                                throws IOException {
+                            if (path.equals(linkPath)) {
+                                linkAttributeReads.incrementAndGet();
+                                return linkLikeAttributes();
+                            }
+                            return super.readAttributes(path);
+                        }
+                    });
+
+            assertOpaqueCode(
+                    WorkspaceErrorCode.LINK_ESCAPE,
+                    () -> provider.materialize(materializationSpec),
+                    linkPath);
+            assertEquals(1, linkAttributeReads.get());
+            assertEquals(1, indeterminateExistsProbes.get());
+            assertEquals(0, loads.get());
+        }
+    }
+
+    @Test
+    void absentRegistrationCleanupIsIdempotentAndPerformsNoWork() {
+        AtomicInteger loads = new AtomicInteger();
+        AtomicInteger writes = new AtomicInteger();
+        AtomicInteger publishes = new AtomicInteger();
+        AtomicInteger deletes = new AtomicInteger();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                root,
+                ignored -> {
+                    loads.incrementAndGet();
+                    return snapshot(file("paper.txt", "paper"));
+                },
+                (target, content, options) -> {
+                    writes.incrementAndGet();
+                    Files.write(target, content, options);
+                },
+                (pending, target) -> {
+                    publishes.incrementAndGet();
+                    LocalWorkspaceProvider.defaultPublish(pending, target);
+                },
+                target -> {
+                    deletes.incrementAndGet();
+                    LocalWorkspaceProvider.deleteTree(target);
+                });
+        WorkspaceMaterializationSpec materializationSpec =
+                spec("absent-cleanup");
+        WorkspaceRef workspace = new WorkspaceRef(
+                materializationSpec.workspaceId(),
+                materializationSpec.sourceProjectVersion());
+
+        provider.cleanup(workspace);
+        provider.cleanup(workspace);
+
+        assertEquals(0, loads.get());
+        assertEquals(0, writes.get());
+        assertEquals(0, publishes.get());
+        assertEquals(0, deletes.get());
+    }
+
+    @Test
+    void unreadableUnknownOccupancyIsOpaquePartialForIoAndRuntimeFailures()
+            throws Exception {
+        for (boolean runtime : List.of(false, true)) {
+            Path providerRoot = root.resolve(runtime ? "runtime" : "io");
+            Files.createDirectory(providerRoot);
+            WorkspaceMaterializationSpec materializationSpec =
+                    spec(runtime ? "attrs-runtime" : "attrs-io");
+            Path unknownFinal =
+                    container(providerRoot, materializationSpec.workspaceId());
+            Files.createDirectory(unknownFinal);
+            AtomicInteger loads = new AtomicInteger();
+            AtomicInteger writes = new AtomicInteger();
+            AtomicInteger publishes = new AtomicInteger();
+            AtomicInteger deletes = new AtomicInteger();
+            LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                    providerRoot,
+                    ignored -> {
+                        loads.incrementAndGet();
+                        return snapshot(file("paper.txt", "paper"));
+                    },
+                    (target, content, options) -> {
+                        writes.incrementAndGet();
+                        Files.write(target, content, options);
+                    },
+                    (pending, target) -> {
+                        publishes.incrementAndGet();
+                        LocalWorkspaceProvider.defaultPublish(pending, target);
+                    },
+                    target -> {
+                        deletes.incrementAndGet();
+                        LocalWorkspaceProvider.deleteTree(target);
+                    },
+                    new DelegatingPathProbe() {
+                        @Override
+                        public BasicFileAttributes readAttributes(Path path)
+                                throws IOException {
+                            if (path.equals(unknownFinal)) {
+                                if (runtime) {
+                                    throw new IllegalStateException(
+                                            "sensitive host failure");
+                                }
+                                throw new IOException(
+                                        "sensitive host failure");
+                            }
+                            return super.readAttributes(path);
+                        }
+                    });
+
+            assertOpaqueCode(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    () -> provider.materialize(materializationSpec),
+                    unknownFinal);
+            assertEquals(0, loads.get());
+            assertEquals(0, writes.get());
+            assertEquals(0, publishes.get());
+            assertEquals(0, deletes.get());
+            assertTrue(Files.isDirectory(unknownFinal));
+        }
+    }
+
+    @Test
+    void indeterminateFinalProbeAfterCopyNeverPublishesAndDeletesOnlyOwnedPending()
+            throws Exception {
+        WorkspaceMaterializationSpec materializationSpec =
+                spec("indeterminate-before-publish");
+        Path finalContainer =
+                container(root, materializationSpec.workspaceId());
+        Path ownedPending =
+                pending(root, materializationSpec.workspaceId());
+        AtomicInteger finalAbsenceProbes = new AtomicInteger();
+        AtomicInteger loads = new AtomicInteger();
+        AtomicInteger writes = new AtomicInteger();
+        AtomicInteger publishes = new AtomicInteger();
+        AtomicInteger deletes = new AtomicInteger();
+        LocalWorkspaceProvider provider = new LocalWorkspaceProvider(
+                root,
+                ignored -> {
+                    loads.incrementAndGet();
+                    return snapshot(file("paper.txt", "paper"));
+                },
+                (target, content, options) -> {
+                    writes.incrementAndGet();
+                    Files.write(target, content, options);
+                },
+                (pending, target) -> {
+                    publishes.incrementAndGet();
+                    LocalWorkspaceProvider.defaultPublish(pending, target);
+                },
+                target -> {
+                    deletes.incrementAndGet();
+                    assertEquals(ownedPending, target);
+                    LocalWorkspaceProvider.deleteTree(target);
+                },
+                new DelegatingPathProbe() {
+                    @Override
+                    public boolean notExists(Path path) {
+                        if (path.equals(finalContainer)
+                                && finalAbsenceProbes.incrementAndGet() == 3) {
+                            return false;
+                        }
+                        return super.notExists(path);
+                    }
+                });
+
+        assertOpaqueCode(
+                WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                () -> provider.materialize(materializationSpec),
+                finalContainer);
+
+        assertEquals(3, finalAbsenceProbes.get());
+        assertEquals(1, loads.get());
+        assertEquals(1, writes.get());
+        assertEquals(0, publishes.get());
+        assertEquals(1, deletes.get());
+        assertFalse(Files.exists(finalContainer));
+        assertFalse(Files.exists(ownedPending));
+    }
+
     private LocalWorkspaceProvider provider(
             ProjectVersionSource source,
             WorkspaceMaterializationWriter writer,
@@ -971,5 +1357,80 @@ class WorkspaceMaterializationProtocolTest {
         assertTrue(failure.projectPath().isEmpty());
         assertFalse(failure.getMessage().contains(sensitivePath.toString()));
         assertFalse(failure.getMessage().contains(sensitivePath.getFileName().toString()));
+    }
+
+    private static class DelegatingPathProbe
+            implements LocalWorkspaceProvider.WorkspacePathProbe {
+        @Override
+        public boolean exists(Path path) {
+            return Files.exists(
+                    path,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        }
+
+        @Override
+        public boolean notExists(Path path) {
+            return Files.notExists(
+                    path,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        }
+
+        @Override
+        public BasicFileAttributes readAttributes(Path path)
+                throws IOException {
+            return Files.readAttributes(
+                    path,
+                    BasicFileAttributes.class,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS);
+        }
+    }
+
+    private static BasicFileAttributes linkLikeAttributes() {
+        return new BasicFileAttributes() {
+            @Override
+            public FileTime lastModifiedTime() {
+                return FileTime.fromMillis(0);
+            }
+
+            @Override
+            public FileTime lastAccessTime() {
+                return FileTime.fromMillis(0);
+            }
+
+            @Override
+            public FileTime creationTime() {
+                return FileTime.fromMillis(0);
+            }
+
+            @Override
+            public boolean isRegularFile() {
+                return false;
+            }
+
+            @Override
+            public boolean isDirectory() {
+                return false;
+            }
+
+            @Override
+            public boolean isSymbolicLink() {
+                return false;
+            }
+
+            @Override
+            public boolean isOther() {
+                return true;
+            }
+
+            @Override
+            public long size() {
+                return 0;
+            }
+
+            @Override
+            public Object fileKey() {
+                return null;
+            }
+        };
     }
 }

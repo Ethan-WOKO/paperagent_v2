@@ -52,6 +52,30 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
     private static final ConcurrentHashMap<MaterializationClaimKey, RetiredTombstone>
             RETIRED_TOMBSTONES =
             new ConcurrentHashMap<>();
+    private static final WorkspacePathProbe DEFAULT_PATH_PROBE =
+            new WorkspacePathProbe() {
+                @Override
+                public boolean exists(Path path) {
+                    return Files.exists(path, NOFOLLOW_LINKS);
+                }
+
+                @Override
+                public boolean notExists(Path path) {
+                    return Files.notExists(path, NOFOLLOW_LINKS);
+                }
+
+                @Override
+                public BasicFileAttributes readAttributes(Path path)
+                        throws IOException {
+                    return Files.readAttributes(
+                            path,
+                            BasicFileAttributes.class,
+                            NOFOLLOW_LINKS);
+                }
+            };
+    private static final WorkspaceCaseProbeObserver NOOP_CASE_PROBE_OBSERVER =
+            ignored -> {
+            };
 
     private final Path providerRoot;
     private final ProjectVersionSource source;
@@ -60,6 +84,7 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
     private final WorkspaceBackupReader backupReader;
     private final WorkspaceDirectoryPublisher directoryPublisher;
     private final WorkspaceTreeDeleter treeDeleter;
+    private final WorkspacePathProbe pathProbe;
     private final boolean caseSensitive;
     private final Map<WorkspaceId, WorkspaceRegistration> workspaces = new HashMap<>();
     private final Map<ProjectVersionRef, ContentHash> sourceManifestFingerprints =
@@ -73,7 +98,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 Files::write,
                 LocalWorkspaceProvider::readBoundedNoFollow,
                 LocalWorkspaceProvider::defaultPublish,
-                LocalWorkspaceProvider::deleteTree);
+                LocalWorkspaceProvider::deleteTree,
+                DEFAULT_PATH_PROBE,
+                NOOP_CASE_PROBE_OBSERVER);
     }
 
     LocalWorkspaceProvider(
@@ -87,7 +114,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 Files::write,
                 LocalWorkspaceProvider::readBoundedNoFollow,
                 LocalWorkspaceProvider::defaultPublish,
-                LocalWorkspaceProvider::deleteTree);
+                LocalWorkspaceProvider::deleteTree,
+                DEFAULT_PATH_PROBE,
+                NOOP_CASE_PROBE_OBSERVER);
     }
 
     LocalWorkspaceProvider(
@@ -101,7 +130,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 Files::write,
                 backupReader,
                 LocalWorkspaceProvider::defaultPublish,
-                LocalWorkspaceProvider::deleteTree);
+                LocalWorkspaceProvider::deleteTree,
+                DEFAULT_PATH_PROBE,
+                NOOP_CASE_PROBE_OBSERVER);
     }
 
     LocalWorkspaceProvider(
@@ -116,7 +147,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 materializationWriter,
                 LocalWorkspaceProvider::readBoundedNoFollow,
                 LocalWorkspaceProvider::defaultPublish,
-                LocalWorkspaceProvider::deleteTree);
+                LocalWorkspaceProvider::deleteTree,
+                DEFAULT_PATH_PROBE,
+                NOOP_CASE_PROBE_OBSERVER);
     }
 
     LocalWorkspaceProvider(
@@ -132,7 +165,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                 materializationWriter,
                 LocalWorkspaceProvider::readBoundedNoFollow,
                 directoryPublisher,
-                treeDeleter);
+                treeDeleter,
+                DEFAULT_PATH_PROBE,
+                NOOP_CASE_PROBE_OBSERVER);
     }
 
     LocalWorkspaceProvider(
@@ -143,6 +178,63 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
             WorkspaceBackupReader backupReader,
             WorkspaceDirectoryPublisher directoryPublisher,
             WorkspaceTreeDeleter treeDeleter) {
+        this(
+                providerRoot,
+                source,
+                mover,
+                materializationWriter,
+                backupReader,
+                directoryPublisher,
+                treeDeleter,
+                DEFAULT_PATH_PROBE,
+                NOOP_CASE_PROBE_OBSERVER);
+    }
+
+    LocalWorkspaceProvider(
+            Path providerRoot,
+            ProjectVersionSource source,
+            WorkspaceMaterializationWriter materializationWriter,
+            WorkspaceDirectoryPublisher directoryPublisher,
+            WorkspaceTreeDeleter treeDeleter,
+            WorkspacePathProbe pathProbe) {
+        this(
+                providerRoot,
+                source,
+                LocalWorkspaceProvider::defaultMove,
+                materializationWriter,
+                LocalWorkspaceProvider::readBoundedNoFollow,
+                directoryPublisher,
+                treeDeleter,
+                pathProbe,
+                NOOP_CASE_PROBE_OBSERVER);
+    }
+
+    LocalWorkspaceProvider(
+            Path providerRoot,
+            ProjectVersionSource source,
+            WorkspaceCaseProbeObserver caseProbeObserver) {
+        this(
+                providerRoot,
+                source,
+                LocalWorkspaceProvider::defaultMove,
+                Files::write,
+                LocalWorkspaceProvider::readBoundedNoFollow,
+                LocalWorkspaceProvider::defaultPublish,
+                LocalWorkspaceProvider::deleteTree,
+                DEFAULT_PATH_PROBE,
+                caseProbeObserver);
+    }
+
+    LocalWorkspaceProvider(
+            Path providerRoot,
+            ProjectVersionSource source,
+            WorkspaceFileMover mover,
+            WorkspaceMaterializationWriter materializationWriter,
+            WorkspaceBackupReader backupReader,
+            WorkspaceDirectoryPublisher directoryPublisher,
+            WorkspaceTreeDeleter treeDeleter,
+            WorkspacePathProbe pathProbe,
+            WorkspaceCaseProbeObserver caseProbeObserver) {
         WorkspaceValues.require(providerRoot, "configureWorkspace");
         this.source = WorkspaceValues.require(source, "configureWorkspace");
         this.mover = WorkspaceValues.require(mover, "configureWorkspace");
@@ -152,6 +244,8 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         this.directoryPublisher =
                 WorkspaceValues.require(directoryPublisher, "configureWorkspace");
         this.treeDeleter = WorkspaceValues.require(treeDeleter, "configureWorkspace");
+        this.pathProbe = WorkspaceValues.require(pathProbe, "configureWorkspace");
+        WorkspaceValues.require(caseProbeObserver, "configureWorkspace");
         if (!providerRoot.isAbsolute()) {
             throw failure(WorkspaceErrorCode.PATH_ESCAPE, "configureWorkspace", null);
         }
@@ -160,7 +254,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
             Files.createDirectories(absolute);
             this.providerRoot = absolute.toRealPath();
             requireDirectoryWithoutLinks(this.providerRoot, "configureWorkspace", null);
-            this.caseSensitive = isCaseSensitive(this.providerRoot);
+            this.caseSensitive = isCaseSensitive(
+                    this.providerRoot,
+                    caseProbeObserver);
         } catch (IOException exception) {
             throw failure(WorkspaceErrorCode.IO_FAILURE, "configureWorkspace", null);
         }
@@ -260,10 +356,12 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
                     "materialize",
                     null);
         } catch (FileAlreadyExistsException exception) {
+            rejectUnknownOccupancy(
+                    spec.workspaceId(),
+                    "materialize",
+                    claim);
             throw failure(
-                    linkLike(container) || linkLike(pending)
-                            ? WorkspaceErrorCode.LINK_ESCAPE
-                            : WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
                     "materialize",
                     null);
         } catch (IOException exception) {
@@ -423,15 +521,9 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         WorkspaceRegistration registration = workspaces.get(workspace.id());
         if (registration == null) {
             requireNoSharedClaim(workspace.id(), "cleanup");
-            Path container = containerFor(workspace.id());
-            Path pending = pendingFor(workspace.id());
-            if (!Files.exists(container, NOFOLLOW_LINKS)
-                    && !Files.exists(pending, NOFOLLOW_LINKS)) {
-                return;
-            }
-            throw failure(linkLike(container) || linkLike(pending)
-                    ? WorkspaceErrorCode.LINK_ESCAPE
-                    : WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, "cleanup", null);
+            requireWorkspacePathsAbsent(workspace.id(), "cleanup");
+            requireNoSharedClaim(workspace.id(), "cleanup");
+            return;
         }
         WorkspaceState state = registration.state();
         requireMatchingReference(state, workspace, "cleanup");
@@ -586,15 +678,7 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
             String operation,
             MaterializationClaim ownedClaim) {
         requireNotRetired(workspaceId, operation);
-        Path container = containerFor(workspaceId);
-        Path pending = pendingFor(workspaceId);
-        if (linkLike(container) || linkLike(pending)) {
-            throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, null);
-        }
-        if (Files.exists(container, NOFOLLOW_LINKS)
-                || Files.exists(pending, NOFOLLOW_LINKS)) {
-            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
-        }
+        requireWorkspacePathsAbsent(workspaceId, operation);
         MaterializationClaimKey key =
                 new MaterializationClaimKey(providerRoot, workspaceId);
         Object holder = MATERIALIZATION_CLAIMS.get(key);
@@ -607,11 +691,72 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
     private void rejectFinalOccupancy(WorkspaceId workspaceId, String operation) {
         requireNotRetired(workspaceId, operation);
         Path container = containerFor(workspaceId);
-        if (linkLike(container)) {
-            throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, null);
+        requireAbsent(container, operation);
+    }
+
+    private void requireWorkspacePathsAbsent(
+            WorkspaceId workspaceId,
+            String operation) {
+        PathOccupancy container =
+                probeOccupancy(containerFor(workspaceId));
+        PathOccupancy pending =
+                probeOccupancy(pendingFor(workspaceId));
+        if (container == PathOccupancy.LINK
+                || pending == PathOccupancy.LINK) {
+            throw failure(
+                    WorkspaceErrorCode.LINK_ESCAPE,
+                    operation,
+                    null);
         }
-        if (Files.exists(container, NOFOLLOW_LINKS)) {
-            throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
+        if (container != PathOccupancy.ABSENT
+                || pending != PathOccupancy.ABSENT) {
+            throw failure(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    operation,
+                    null);
+        }
+    }
+
+    private void requireAbsent(Path path, String operation) {
+        PathOccupancy occupancy = probeOccupancy(path);
+        if (occupancy == PathOccupancy.LINK) {
+            throw failure(
+                    WorkspaceErrorCode.LINK_ESCAPE,
+                    operation,
+                    null);
+        }
+        if (occupancy != PathOccupancy.ABSENT) {
+            throw failure(
+                    WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE,
+                    operation,
+                    null);
+        }
+    }
+
+    private PathOccupancy probeOccupancy(Path path) {
+        boolean exists;
+        boolean notExists;
+        try {
+            exists = pathProbe.exists(path);
+            notExists = pathProbe.notExists(path);
+        } catch (RuntimeException exception) {
+            return PathOccupancy.INDETERMINATE;
+        }
+        if (!exists && notExists) {
+            return PathOccupancy.ABSENT;
+        }
+        if (!exists || notExists) {
+            return PathOccupancy.INDETERMINATE;
+        }
+        try {
+            BasicFileAttributes attributes =
+                    pathProbe.readAttributes(path);
+            if (attributes.isSymbolicLink() || attributes.isOther()) {
+                return PathOccupancy.LINK;
+            }
+            return PathOccupancy.PRESENT;
+        } catch (IOException | RuntimeException exception) {
+            return PathOccupancy.INDETERMINATE;
         }
     }
 
@@ -731,15 +876,7 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         WorkspaceRegistration registration = workspaces.get(workspace.id());
         if (registration == null) {
             requireNoSharedClaim(workspace.id(), operation);
-            Path container = containerFor(workspace.id());
-            Path pending = pendingFor(workspace.id());
-            if (linkLike(container) || linkLike(pending)) {
-                throw failure(WorkspaceErrorCode.LINK_ESCAPE, operation, null);
-            }
-            if (Files.exists(container, NOFOLLOW_LINKS)
-                    || Files.exists(pending, NOFOLLOW_LINKS)) {
-                throw failure(WorkspaceErrorCode.WORKSPACE_PARTIAL_STATE, operation, null);
-            }
+            requireWorkspacePathsAbsent(workspace.id(), operation);
             requireNoSharedClaim(workspace.id(), operation);
             throw failure(WorkspaceErrorCode.WORKSPACE_NOT_FOUND, operation, null);
         }
@@ -1260,25 +1397,38 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
         return new ProjectPath(value);
     }
 
-    private static boolean isCaseSensitive(Path stagingRoot) throws IOException {
-        Path lower = stagingRoot.resolve(".paperagent-case-probe");
-        Path upper = stagingRoot.resolve(".PAPERAGENT-CASE-PROBE");
-        boolean created = false;
+    private static boolean isCaseSensitive(
+            Path providerRoot,
+            WorkspaceCaseProbeObserver observer)
+            throws IOException {
+        Path probeDirectory = Files.createTempDirectory(
+                providerRoot,
+                ".paperagent-case-probe-");
+        Path lower = probeDirectory.resolve("probe");
+        Path upper = probeDirectory.resolve("PROBE");
+        boolean lowerCreated = false;
         try {
             Files.write(
                     lower,
                     new byte[]{0},
                     StandardOpenOption.CREATE_NEW,
                     StandardOpenOption.WRITE);
-            created = true;
-            if (!Files.exists(upper, NOFOLLOW_LINKS)) {
+            lowerCreated = true;
+            observer.afterLowerCreated(probeDirectory);
+            boolean upperExists = Files.exists(upper, NOFOLLOW_LINKS);
+            boolean upperNotExists = Files.notExists(upper, NOFOLLOW_LINKS);
+            if (!upperExists && upperNotExists) {
                 return true;
+            }
+            if (!upperExists || upperNotExists) {
+                throw new IOException("case-sensitivity probe was indeterminate");
             }
             return !Files.isSameFile(lower, upper);
         } finally {
-            if (created) {
-                Files.deleteIfExists(lower);
+            if (lowerCreated) {
+                Files.delete(lower);
             }
+            Files.delete(probeDirectory);
         }
     }
 
@@ -1437,6 +1587,26 @@ public final class LocalWorkspaceProvider implements WorkspacePort {
     private record RetiredTombstone(
             WorkspaceMaterializationSpec spec,
             WorkspaceRef workspace) {
+    }
+
+    interface WorkspacePathProbe {
+        boolean exists(Path path);
+
+        boolean notExists(Path path);
+
+        BasicFileAttributes readAttributes(Path path) throws IOException;
+    }
+
+    @FunctionalInterface
+    interface WorkspaceCaseProbeObserver {
+        void afterLowerCreated(Path probeDirectory);
+    }
+
+    private enum PathOccupancy {
+        ABSENT,
+        PRESENT,
+        LINK,
+        INDETERMINATE
     }
 
     private enum RegistrationStatus {

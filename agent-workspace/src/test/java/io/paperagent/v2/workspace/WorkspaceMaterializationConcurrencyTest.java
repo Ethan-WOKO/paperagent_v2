@@ -36,6 +36,54 @@ class WorkspaceMaterializationConcurrencyTest {
     Path root;
 
     @Test
+    void concurrentProvidersUseDistinctOwnedCaseProbeDirectories()
+            throws Exception {
+        Path sharedRoot = root.resolve("shared-case-probe");
+        CountDownLatch bothLowerFilesCreated = new CountDownLatch(2);
+        CountDownLatch releaseProbes = new CountDownLatch(1);
+        List<Path> observedProbeDirectories =
+                java.util.Collections.synchronizedList(new ArrayList<>());
+        LocalWorkspaceProvider.WorkspaceCaseProbeObserver observer =
+                probeDirectory -> {
+                    observedProbeDirectories.add(probeDirectory);
+                    bothLowerFilesCreated.countDown();
+                    await(releaseProbes);
+                };
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        Future<LocalWorkspaceProvider> first = executor.submit(
+                () -> new LocalWorkspaceProvider(
+                        sharedRoot,
+                        ignored -> snapshot(),
+                        observer));
+        Future<LocalWorkspaceProvider> second = executor.submit(
+                () -> new LocalWorkspaceProvider(
+                        sharedRoot,
+                        ignored -> snapshot(),
+                        observer));
+        try {
+            await(bothLowerFilesCreated);
+            releaseProbes.countDown();
+            assertNotNull(first.get());
+            assertNotNull(second.get());
+        } finally {
+            releaseProbes.countDown();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+
+        assertEquals(
+                2,
+                observedProbeDirectories.stream().distinct().count());
+        try (var entries = Files.list(sharedRoot)) {
+            assertEquals(
+                    0,
+                    entries.filter(path -> path.getFileName().toString()
+                            .startsWith(".paperagent-case-probe-"))
+                            .count());
+        }
+    }
+
+    @Test
     void thirtyTwoConcurrentExactCallsLoadCopyAndPublishOnlyOnce() throws Exception {
         AtomicInteger loads = new AtomicInteger();
         AtomicInteger writes = new AtomicInteger();

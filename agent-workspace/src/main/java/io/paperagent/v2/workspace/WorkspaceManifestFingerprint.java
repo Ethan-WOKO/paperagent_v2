@@ -1,8 +1,12 @@
 package io.paperagent.v2.workspace;
 
 import io.paperagent.v2.contracts.ContentHash;
+import io.paperagent.v2.contracts.ProjectPath;
 
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -16,8 +20,10 @@ import java.util.Map;
 final class WorkspaceManifestFingerprint {
     private static final byte[] DOMAIN =
             "paperagent.workspace.source-manifest.v1".getBytes(StandardCharsets.UTF_8);
-    private static final Comparator<String> UTF8_ORDER =
-            (left, right) -> compareUnsigned(utf8(left), utf8(right));
+    private static final Comparator<String> METADATA_UTF8_ORDER =
+            (left, right) -> compareUnsigned(
+                    metadataUtf8(left),
+                    metadataUtf8(right));
 
     private WorkspaceManifestFingerprint() {
     }
@@ -26,19 +32,19 @@ final class WorkspaceManifestFingerprint {
         WorkspaceValues.require(snapshot, "sourceManifestFingerprint");
         MessageDigest digest = WorkspaceHashes.newSha256Digest();
         field(digest, DOMAIN);
-        field(digest, utf8(snapshot.version().projectId()));
-        field(digest, utf8(snapshot.version().versionId()));
+        field(digest, trustedUtf8(snapshot.version().projectId()));
+        field(digest, trustedUtf8(snapshot.version().versionId()));
         metadata(digest, snapshot.metadata());
 
         List<ProjectFileSnapshot> files = new ArrayList<>(snapshot.files());
-        files.sort((left, right) -> UTF8_ORDER.compare(
-                left.path().value(),
-                right.path().value()));
+        files.sort((left, right) -> compareUnsigned(
+                pathUtf8(left.path()),
+                pathUtf8(right.path())));
         integer(digest, files.size());
         for (ProjectFileSnapshot file : files) {
-            field(digest, utf8(file.path().value()));
+            field(digest, pathUtf8(file.path()));
             longInteger(digest, file.content().length);
-            field(digest, utf8(file.hash().value()));
+            field(digest, trustedUtf8(file.hash().value()));
             metadata(digest, file.metadata());
         }
         return new ContentHash("sha256", WorkspaceHashes.lowercaseHex(digest.digest()));
@@ -47,13 +53,19 @@ final class WorkspaceManifestFingerprint {
     private static void metadata(MessageDigest digest, Map<String, String> metadata) {
         List<Map.Entry<String, String>> entries = new ArrayList<>(metadata.entrySet());
         entries.sort((left, right) -> {
-            int key = UTF8_ORDER.compare(left.getKey(), right.getKey());
-            return key != 0 ? key : UTF8_ORDER.compare(left.getValue(), right.getValue());
+            int key = METADATA_UTF8_ORDER.compare(
+                    left.getKey(),
+                    right.getKey());
+            return key != 0
+                    ? key
+                    : METADATA_UTF8_ORDER.compare(
+                            left.getValue(),
+                            right.getValue());
         });
         integer(digest, entries.size());
         for (Map.Entry<String, String> entry : entries) {
-            field(digest, utf8(entry.getKey()));
-            field(digest, utf8(entry.getValue()));
+            field(digest, metadataUtf8(entry.getKey()));
+            field(digest, metadataUtf8(entry.getValue()));
         }
     }
 
@@ -70,8 +82,46 @@ final class WorkspaceManifestFingerprint {
         digest.update(ByteBuffer.allocate(Long.BYTES).putLong(value).array());
     }
 
-    private static byte[] utf8(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
+    private static byte[] pathUtf8(ProjectPath path) {
+        try {
+            return strictUtf8(path.value());
+        } catch (CharacterCodingException exception) {
+            throw new WorkspaceException(
+                    WorkspaceErrorCode.PATH_COLLISION,
+                    "materialize",
+                    path);
+        }
+    }
+
+    private static byte[] metadataUtf8(String value) {
+        try {
+            return strictUtf8(value);
+        } catch (CharacterCodingException exception) {
+            throw new WorkspaceException(
+                    WorkspaceErrorCode.INVALID_METADATA,
+                    "materialize");
+        }
+    }
+
+    private static byte[] trustedUtf8(String value) {
+        try {
+            return strictUtf8(value);
+        } catch (CharacterCodingException exception) {
+            throw new WorkspaceException(
+                    WorkspaceErrorCode.INVALID_METADATA,
+                    "materialize");
+        }
+    }
+
+    private static byte[] strictUtf8(String value)
+            throws CharacterCodingException {
+        ByteBuffer encoded = StandardCharsets.UTF_8.newEncoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .encode(CharBuffer.wrap(value));
+        byte[] bytes = new byte[encoded.remaining()];
+        encoded.get(bytes);
+        return bytes;
     }
 
     private static int compareUnsigned(byte[] left, byte[] right) {

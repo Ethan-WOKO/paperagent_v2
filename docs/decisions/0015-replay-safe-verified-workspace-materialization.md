@@ -50,6 +50,14 @@ The fingerprint is SHA-256 over this exact versioned encoding:
    size, length-prefixed validated lowercase SHA-256 value, and metadata in
    the same canonical map encoding.
 
+Canonical UTF-8 is produced with a strict encoder that reports malformed
+UTF-16 instead of substituting replacement bytes. An unpaired surrogate in a
+Project path fails materialization as `PATH_COLLISION`; an unpaired surrogate
+in snapshot or file metadata fails as `INVALID_METADATA`. Both mappings are
+stable and omit the raw encoding cause. Contract-constrained source identifiers,
+hashes and the fingerprint domain are ASCII, and every remaining canonical
+text field is encoded through the same strict path.
+
 The supplied file hash is verified against the bytes before fingerprinting.
 List and map iteration order do not affect the result. WorkspaceId and limits
 are deliberately excluded because they already belong to exact spec identity.
@@ -87,6 +95,15 @@ before source or filesystem mutation. Unknown final or deterministic pending
 occupancy is never adopted, overwritten or deleted. Links and reparse entries
 fail as link escape; other occupancy and registered missing/corrupt roots fail
 as partial state.
+
+Unknown final and pending paths use a three-state, fail-closed occupancy
+probe. Absence is proven only when `Files.notExists(path, NOFOLLOW_LINKS)`
+returns `true` while the corresponding existence probe reports no entry.
+Contradictory results, an existence or attribute probe exception, and
+`exists == false` together with `notExists == false` are indeterminate and
+fail as `WORKSPACE_PARTIAL_STATE`. Both final and pending paths are probed
+before classification so a definite link or reparse entry retains
+`LINK_ESCAPE` priority over an indeterminate peer.
 
 Local registration state and the source pin last only for one provider
 instance. The shared tombstone lasts for the lifetime of the defining
