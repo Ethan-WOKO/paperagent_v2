@@ -50,7 +50,7 @@ class CheckpointModuleBoundaryTest {
             "Thread.sleep");
 
     @Test
-    void runtimeModuleProductionDependenciesRemainContractsAndPersistenceOnly()
+    void runtimeModuleProductionDependenciesRemainFrozen()
             throws Exception {
         Path module = moduleDirectory();
         var document = DocumentBuilderFactory.newInstance()
@@ -75,7 +75,8 @@ class CheckpointModuleBoundaryTest {
         assertEquals(
                 List.of(
                         "io.paperagent.v2:agent-contracts",
-                        "io.paperagent.v2:agent-persistence"),
+                        "io.paperagent.v2:agent-persistence",
+                        "io.paperagent.v2:agent-workspace"),
                 productionDependencies);
         assertEquals(
                 List.of("org.junit.jupiter:junit-jupiter"),
