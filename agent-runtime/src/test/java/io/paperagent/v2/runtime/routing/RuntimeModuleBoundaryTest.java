@@ -41,6 +41,10 @@ class RuntimeModuleBoundaryTest {
                     "import io.paperagent.v2.persistence.PersistenceFailure;",
                     "import io.paperagent.v2.persistence.PersistenceOutcome;",
                     "import io.paperagent.v2.persistence.PersistenceResult;");
+    private static final Set<String>
+            ALLOWED_RECOVERY_MATERIALIZATION_PERSISTENCE_IMPORTS = Set.of(
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStartReady;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             "io.paperagent.v2.workspace",
@@ -182,6 +186,15 @@ class RuntimeModuleBoundaryTest {
                 "execution",
                 "start",
                 "Starter.java"));
+        Path recoveryMaterializationSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "recovery",
+                "materialization",
+                "Materializer.java"));
         Path otherRuntimeSource = sourceRoot.resolve(Path.of(
                 "io",
                 "paperagent",
@@ -205,6 +218,11 @@ class RuntimeModuleBoundaryTest {
                             sourceRoot,
                             executionStartSource).contains(allowed));
         }
+        assertEquals(
+                ALLOWED_RECOVERY_MATERIALIZATION_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(
+                        sourceRoot,
+                        recoveryMaterializationSource));
 
         assertFalse(allowedPersistenceImports(sourceRoot, bootstrapSource)
                 .contains(
@@ -227,6 +245,18 @@ class RuntimeModuleBoundaryTest {
                         .contains(
                                 "import io.paperagent.v2.persistence"
                                         + ".InMemoryPersistence;"));
+        assertFalse(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        recoveryMaterializationSource)
+                        .contains(
+                                "import io.paperagent.v2.persistence"
+                                        + ".PersistedExecutionStartCommitted;"));
+        assertFalse(
+                allowedPersistenceImports(sourceRoot, executionSource)
+                        .contains(
+                                "import io.paperagent.v2.persistence"
+                                        + ".PersistedExecutionStartReady;"));
         assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
                 .contains("import io.paperagent.v2.persistence.*;"));
         assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
@@ -292,11 +322,28 @@ class RuntimeModuleBoundaryTest {
                 "start"));
     }
 
+    private static boolean isRecoveryMaterializationSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "recovery",
+                "materialization"));
+    }
+
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
         if (isBootstrapSource(sourceRoot, sourcePath)) {
             return ALLOWED_BOOTSTRAP_PERSISTENCE_IMPORTS;
+        }
+        if (isRecoveryMaterializationSource(sourceRoot, sourcePath)) {
+            return ALLOWED_RECOVERY_MATERIALIZATION_PERSISTENCE_IMPORTS;
         }
         if (isExecutionStartSource(sourceRoot, sourcePath)) {
             return ALLOWED_EXECUTION_START_PERSISTENCE_IMPORTS;
