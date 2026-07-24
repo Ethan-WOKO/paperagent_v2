@@ -20,7 +20,9 @@ final class WorkspaceHashes {
 
     static ContentHash sha256(byte[] content) {
         WorkspaceValues.require(content, "hash");
-        return new ContentHash("sha256", hex(newDigest().digest(content)));
+        return new ContentHash(
+                "sha256",
+                lowercaseHex(newSha256Digest().digest(content)));
     }
 
     static ContentHash sha256(
@@ -28,7 +30,7 @@ final class WorkspaceHashes {
             long maximum,
             String operation,
             ProjectPath projectPath) {
-        MessageDigest digest = newDigest();
+        MessageDigest digest = newSha256Digest();
         byte[] buffer = new byte[8192];
         try (InputStream input = Files.newInputStream(
                 path,
@@ -46,19 +48,25 @@ final class WorkspaceHashes {
                 digest.update(buffer, 0, read);
                 total += read;
             }
-            return new ContentHash("sha256", hex(digest.digest()));
+            return new ContentHash("sha256", lowercaseHex(digest.digest()));
         } catch (WorkspaceException exception) {
             throw exception;
+        } catch (UnsupportedOperationException exception) {
+            throw new WorkspaceException(
+                    WorkspaceErrorCode.LINK_ESCAPE,
+                    operation,
+                    projectPath);
         } catch (IOException exception) {
             throw new WorkspaceException(WorkspaceErrorCode.IO_FAILURE, operation, projectPath);
         }
     }
 
     static String sha256Text(String value) {
-        return hex(newDigest().digest(value.getBytes(StandardCharsets.UTF_8)));
+        return lowercaseHex(
+                newSha256Digest().digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 
-    private static MessageDigest newDigest() {
+    static MessageDigest newSha256Digest() {
         try {
             return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException exception) {
@@ -66,7 +74,7 @@ final class WorkspaceHashes {
         }
     }
 
-    private static String hex(byte[] bytes) {
+    static String lowercaseHex(byte[] bytes) {
         StringBuilder result = new StringBuilder(bytes.length * 2);
         for (byte value : bytes) {
             result.append(Character.forDigit((value >>> 4) & 0xf, 16));

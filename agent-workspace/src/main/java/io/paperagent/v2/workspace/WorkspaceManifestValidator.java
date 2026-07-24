@@ -3,6 +3,7 @@ package io.paperagent.v2.workspace;
 import io.paperagent.v2.contracts.ContentHash;
 import io.paperagent.v2.contracts.ProjectPath;
 import io.paperagent.v2.contracts.ProjectVersionRef;
+import io.paperagent.v2.contracts.WorkspaceMaterializationLimits;
 
 import java.text.Normalizer;
 import java.util.Comparator;
@@ -32,7 +33,7 @@ final class WorkspaceManifestValidator {
 
     static void validateLimits(
             List<ProjectFileSnapshot> files,
-            WorkspaceLimits limits) {
+            WorkspaceMaterializationLimits limits) {
         if (files.size() > limits.maxFiles()) {
             throw failure(WorkspaceErrorCode.FILE_COUNT_LIMIT_EXCEEDED, null);
         }
