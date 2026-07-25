@@ -29,30 +29,40 @@ V2 不继续修补旧 Runtime。它重新实现 Agent 核心，同时选择性�
 ## 当前阶段
 
 `Wave 0 / Bootstrap`、`Wave 1 / Runtime Contracts` 和 `Wave 2 / 独立基础能力` 已完成。
-当前为 `Wave 3 / Runtime 主链` 的规划阶段：
+`Wave 3 / Runtime 主链` 正在按依赖顺序实现，已经不再是纯规划状态。
 
-- Java 17 / Maven 多模块骨架和纯契约已建立。
-- TaskFrame、Plan、Workspace、Event、Receipt 和 Diff 边界已冻结。
-- Wave 2 已实现内存持久化参考适配器、本地隔离 Workspace、Model Provider 和 Sandbox
-  端口及确定性脚本适配器。
-- 测试专用 E2E Harness 已证明这些公开边界可以组合、失败隔离且不会擅自生成 Runtime
-  执行事实。
-- 尚未迁移 V1 代码。
-- 尚未实现 Runtime 主链、真实模型或执行后端、产品 API、UI 和用户旅程。
-- 当前持久化实现不承诺进程重启后的耐久性；Sandbox 不执行真实进程，也不提供真实网络、
-  资源或密钥隔离。
-- 尚未确定数据库 schema 或线协议。
+已完成并合并的 Wave 3 基础切片包括二元 Router、TaskFrame/Plan/Checkpoint 冻结、原子
+Persistence bootstrap、execution start/recovery、Workspace 物化与校验、Plan execution
+context 及其 Runtime composition。当前安全停止点、精确提交、开放 Issue/PR、测试证据和下一
+切片见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+
+仍未完成的关键产品能力：
+
+- Runtime Step activation composition、effect/receipt/progress/completion/replan/recovery 主链。
+- 单轮 Step kernel、bounded Step Agent Loop 和 bounded repair/replan。
+- 真实模型或执行后端、耐久数据库适配器和生产级隔离。
+- 产品 API、Web UI、用户接受/拒绝与新 ProjectVersion 闭环。
+- 真实登录到结果的自动化用户旅程。
+- V1 选择性迁移；V1 仍按 `MIGRATION_MAP.md` 默认 `UNASSESSED`，禁止直接复制。
+
+当前内存 Persistence 不承诺进程重启耐久性；确定性 Sandbox 不等同于真实进程、网络、资源
+或密钥隔离。数据库 schema 和线协议也尚未冻结。
 
 ## 下一步
 
-1. 先合并 Wave 2 阶段验收 PR；该 PR 的 GitHub 合并提交是所有 Wave 3 Issue
-   唯一有效的 `baseCommit`。
-2. 由主对话按 Runtime 主链的依赖顺序发布 Wave 3 Issue，冻结接口、文件所有权、验收条件和
-   合并顺序。
-3. 为每个 Issue 创建独立 worktree、`codex/` 分支和 Draft PR。
-4. 阶段验收合并前不得开始 Wave 3 实现；Wave 3 不得把已冻结的公开边界重新集中到单个大
-   Service。
+1. 读取 [当前开发状态](ACTIVE_DEVELOPMENT.md)，再用 Git/GitHub 核对其中记录的 SHA、
+   Issue、Draft PR 和 CI；外部状态可能在文档写入后变化，不得猜测。
+2. 先完成当前 Draft PR 的 fixed-head 静态审查、自动化测试和 CI 门禁。只有主对话可以决定
+   Ready、合并和合并顺序。
+3. 合并后以 GitHub merge commit 作为下一 Issue 的唯一 `baseCommit`，发布
+   Runtime Step activation composition Issue。
+4. 每个功能继续使用独立 Issue、worktree、`codex/` 分支和 Draft PR；不得越过
+   `ACTIVE_DEVELOPMENT.md` 中的依赖顺序并行实现下游能力。
 
 ## 新主对话建议指令
 
-> 读取 `AGENTS.md` 和 `docs/START_HERE.md`。你是 PaperAgent V2 主对话，负责架构、Issue、PR 审查、合并顺序和阶段验收，不直接承担普通功能实现。先核对当前阶段、未决事项和下一步，不要立即复制 V1 代码。
+> 完整读取 `AGENTS.md`、`docs/START_HERE.md`、`docs/ARCHITECTURE.md`、
+> `docs/MIGRATION_MAP.md`、`docs/DEVELOPMENT_PROCESS.md`、`docs/ROADMAP.md` 和
+> `docs/ACTIVE_DEVELOPMENT.md`。你是 PaperAgent V2 主对话，负责架构冻结、Issue、PR
+> 审查、合并顺序和阶段验收，不直接承担普通功能实现。先核对 Git/GitHub 当前状态，再从
+> `ACTIVE_DEVELOPMENT.md` 的停止点继续；不要复制 V1 代码或读取 `.env`。
