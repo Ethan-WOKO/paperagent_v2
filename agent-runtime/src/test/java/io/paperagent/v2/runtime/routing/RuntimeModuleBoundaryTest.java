@@ -112,6 +112,10 @@ class RuntimeModuleBoundaryTest {
                     "import io.paperagent.v2.workspace.WorkspaceErrorCode;",
                     "import io.paperagent.v2.workspace.WorkspaceException;",
                     "import io.paperagent.v2.workspace.WorkspacePort;");
+    private static final Set<String>
+            ALLOWED_ACTIVATION_MATERIALIZATION_PERSISTENCE_IMPORTS = Set.of(
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedExecutionStartCommitted;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             WORKSPACE_PREFIX,
@@ -297,6 +301,26 @@ class RuntimeModuleBoundaryTest {
                 "context",
                 "composition",
                 "Composer.java"));
+        Path activationMaterializationSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "activation",
+                "materialization",
+                "Materializer.java"));
+        Path activationMaterializationSubpackageSource =
+                sourceRoot.resolve(Path.of(
+                        "io",
+                        "paperagent",
+                        "v2",
+                        "runtime",
+                        "execution",
+                        "activation",
+                        "materialization",
+                        "internal",
+                        "Escape.java"));
         Path otherRuntimeSource = sourceRoot.resolve(Path.of(
                 "io",
                 "paperagent",
@@ -336,6 +360,15 @@ class RuntimeModuleBoundaryTest {
                         sourceRoot,
                         contextCompositionSource));
         assertEquals(
+                ALLOWED_ACTIVATION_MATERIALIZATION_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(
+                        sourceRoot,
+                        activationMaterializationSource));
+        assertTrue(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        activationMaterializationSubpackageSource).isEmpty());
+        assertEquals(
                 ALLOWED_CONTEXT_COMPOSITION_WORKSPACE_IMPORTS,
                 allowedWorkspaceImports(
                         sourceRoot,
@@ -344,6 +377,14 @@ class RuntimeModuleBoundaryTest {
                 allowedWorkspaceImports(
                         sourceRoot,
                         recoveryCompositionSource).isEmpty());
+        assertTrue(
+                allowedWorkspaceImports(
+                        sourceRoot,
+                        activationMaterializationSource).isEmpty());
+        assertTrue(
+                allowedWorkspaceImports(
+                        sourceRoot,
+                        activationMaterializationSubpackageSource).isEmpty());
 
         assertFalse(allowedPersistenceImports(sourceRoot, bootstrapSource)
                 .contains(
@@ -385,6 +426,33 @@ class RuntimeModuleBoundaryTest {
                         .contains(
                                 "import io.paperagent.v2.persistence"
                                         + ".PersistedExecutionStartReady;"));
+        assertFalse(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        activationMaterializationSource)
+                        .contains(
+                                "import io.paperagent.v2.persistence"
+                                        + ".StepActivationRequest;"));
+        assertFalse(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        activationMaterializationSource)
+                        .contains(
+                                "import io.paperagent.v2.persistence.*;"));
+        assertFalse(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        activationMaterializationSource)
+                        .contains(
+                                "import static io.paperagent.v2.persistence"
+                                        + ".PersistenceOutcome.APPLIED;"));
+        assertFalse(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        activationMaterializationSource)
+                        .contains(
+                                "return io.paperagent.v2.persistence"
+                                        + ".PersistenceResult.applied(value);"));
         assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
                 .contains("import io.paperagent.v2.persistence.*;"));
         assertFalse(allowedPersistenceImports(sourceRoot, executionSource)
@@ -492,9 +560,42 @@ class RuntimeModuleBoundaryTest {
                 "composition"));
     }
 
+    private static boolean isActivationMaterializationSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        Path parent = relative.getParent();
+        return parent != null
+                && parent.equals(activationMaterializationPackage());
+    }
+
+    private static boolean isActivationMaterializationTreeSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(activationMaterializationPackage());
+    }
+
+    private static Path activationMaterializationPackage() {
+        return Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "activation",
+                "materialization");
+    }
+
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
+        if (isActivationMaterializationSource(sourceRoot, sourcePath)) {
+            return ALLOWED_ACTIVATION_MATERIALIZATION_PERSISTENCE_IMPORTS;
+        }
+        if (isActivationMaterializationTreeSource(sourceRoot, sourcePath)) {
+            return Set.of();
+        }
         if (isContextCompositionSource(sourceRoot, sourcePath)) {
             return ALLOWED_CONTEXT_COMPOSITION_PERSISTENCE_IMPORTS;
         }
