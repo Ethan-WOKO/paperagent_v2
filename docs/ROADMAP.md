@@ -40,21 +40,43 @@
 
 ## Wave 3：Runtime 主链
 
-状态：`PLANNING`（尚未实现）
+状态：`IN_PROGRESS`
 
-- 二元 Router。
-- TaskFrame 构建和冻结。
-- 持久化 Plan 执行。
-- Step Agent Loop。
-- bounded repair 和 bounded replan。
-- 暂停、取消、恢复和幂等。
+已完成并合并：
+
+- 二元 Router、TaskFrame 构建与冻结、初始 Plan/revision/checkpoint。
+- 完成事实历史、下一 Plan revision、全局事件游标和 checkpoint latest-revision 约束。
+- 原子 Persistence bootstrap、lease 时间、execution start、fresh-execution gate。
+- execution-start recovery inspection/materialization/runtime composition。
+- Step activation Persistence authority。
+- Workspace materialization specification、verified materialization 与执行 mutation authority。
+- Plan execution context Persistence authority 与 Runtime composition。
+
+当前安全停止点：
+
+- Issue #70 的 committed-H0 Step activation candidate materialization 已实现、测试并发布为
+  Draft PR；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+
+仍待按依赖顺序完成：
+
+- Runtime Step activation composition。
+- provider-neutral effect identity/replayability、durable intent、fenced result/progress 和
+  Receipt ownership。
+- completion/revision、pause/fail/cancel、fenced replan。
+- 原子 Step Recovery inspection 与 Runtime Step Recovery composition。
+- 单轮 Step kernel、bounded Step Agent Loop、bounded repair/replan。
+
+Wave 3 完成前不得把这些切片重新集中到单个大 Service，也不得用未审查的 V1 Runtime
+填补缺口。
 
 ## Wave 4：产品闭环
 
+- V2 产品 API 与 Web UI。
 - Final Synthesis。
 - Plan、事件、receipt 和 diff API。
 - 用户确认、拒绝和新 ProjectVersion。
 - 前端主流程。
+- Recovery composition 的 Runtime 基础属于 Wave 3；面向用户的恢复入口和展示属于 Wave 4。
 
 ## Wave 5：选择性迁移与真实验收
 
