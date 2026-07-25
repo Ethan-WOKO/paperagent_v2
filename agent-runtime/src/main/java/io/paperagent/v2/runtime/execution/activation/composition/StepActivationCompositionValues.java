@@ -5,7 +5,37 @@ import io.paperagent.v2.persistence.PersistedStepActivation;
 import io.paperagent.v2.persistence.PersistenceFailure;
 import io.paperagent.v2.persistence.PersistenceOutcome;
 
+import java.util.Set;
+
 final class StepActivationCompositionValues {
+    private static final Set<String> VALIDATION_PATHS = Set.of(
+            "stepActivationComposition.materializer",
+            "stepActivationComposition.leaseRepository",
+            "stepActivationComposition.stepActivationRepository",
+            "stepActivationComposition.request",
+            "stepActivationCompositionRequest.committedStart",
+            "stepActivationCompositionRequest.stepId",
+            "stepActivationCompositionRequest.attempt",
+            "stepActivationAttempt.leaseOwnerId",
+            "stepActivationAttempt.leaseToken",
+            "stepActivationAttempt.leaseExpiresAt",
+            "stepActivationAttempt.eventDraft",
+            "stepActivationAttempt.checkpointCreatedAt",
+            "stepActivationCommitted.activationOutcome",
+            "stepActivationCommitted.persistedActivation",
+            "stepActivationCommitted.leaseDisposition",
+            "stepActivationLeaseRejected.planId",
+            "stepActivationLeaseRejected.failure",
+            "stepActivationLeaseRejected.leaseDisposition",
+            "stepActivationPersistenceRejected.planId",
+            "stepActivationPersistenceRejected.failure",
+            "stepActivationPersistenceRejected.leaseDisposition");
+
+    private static final Set<String> PROTOCOL_BASE_PATHS = Set.of(
+            "stepActivationComposition.materializeResult",
+            "stepActivationComposition.leaseAcquireResult",
+            "stepActivationComposition.activationResult");
+
     private StepActivationCompositionValues() {
     }
 
@@ -93,11 +123,26 @@ final class StepActivationCompositionValues {
     }
 
     static String validationPath(String path) {
-        return requiredInternal(path, "path");
+        requiredInternal(path, "path");
+        if (!VALIDATION_PATHS.contains(path)) {
+            throw new IllegalArgumentException(
+                    "path is not in the validation lexicon");
+        }
+        return path;
     }
 
     static String protocolPath(String path) {
-        return requiredInternal(path, "path");
+        requiredInternal(path, "path");
+        for (String base : PROTOCOL_BASE_PATHS) {
+            if (path.equals(base)
+                    || path.equals(base + ".outcome")
+                    || path.equals(base + ".value")
+                    || path.equals(base + ".failure")) {
+                return path;
+            }
+        }
+        throw new IllegalArgumentException(
+                "path is not in the protocol lexicon");
     }
 
     static <T> T requiredInternal(T value, String name) {

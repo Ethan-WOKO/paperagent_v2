@@ -13,7 +13,7 @@ public final class StepActivationCompositionValidationException
                 + ", path="
                 + StepActivationCompositionValues.validationPath(path));
         this.code = code;
-        this.path = path;
+        this.path = StepActivationCompositionValues.validationPath(path);
     }
 
     public StepActivationCompositionValidationCode code() {

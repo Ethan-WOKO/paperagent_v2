@@ -70,4 +70,22 @@ class StepActivationCompositionBoundaryTest {
         assertFalse(failure.getMessage().contains("secret"));
         assertFalse(failure.toString().contains("plan-boundary-protocol"));
     }
+
+    @Test
+    void validationAndProtocolPathsAreClosedLexicons() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new StepActivationCompositionValidationException(
+                        StepActivationCompositionValidationCode.REQUIRED_VALUE_MISSING,
+                        "stepActivationComposition.unknown"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new StepActivationCompositionProtocolException(
+                        new io.paperagent.v2.contracts.PlanId("plan-lexicon"),
+                        StepActivationCompositionStage.MATERIALIZE,
+                        StepActivationCompositionProtocolCode.NULL_COLLABORATOR_RESULT,
+                        "stepActivationComposition.unknown",
+                        StepActivationLeaseDisposition.NO_LEASE_ACTION,
+                        null));
+    }
 }
