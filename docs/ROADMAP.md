@@ -51,11 +51,14 @@
 - Step activation Persistence authority。
 - Workspace materialization specification、verified materialization 与执行 mutation authority。
 - Plan execution context Persistence authority 与 Runtime composition。
+- committed-H0 Step activation candidate materialization。
 
 当前安全停止点：
 
-- Issue #70 的 committed-H0 Step activation candidate materialization 已实现、测试并发布为
-  Draft PR；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+- PR #72 已合并，Issue #70 已关闭；本次交接刷新前 `main`/`origin/main` 的已核对 baseline
+  为 `958d2e1af58d3d6816f136f75e529a0d53357554`。PR #75 合并后，必须以其 GitHub merge
+  commit 作为下一实现 Issue 的唯一 `baseCommit`，再发布并冻结 Runtime Step activation
+  composition Issue；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍待按依赖顺序完成：
 
