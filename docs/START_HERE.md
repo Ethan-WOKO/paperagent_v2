@@ -33,8 +33,9 @@ V2 不继续修补旧 Runtime。它重新实现 Agent 核心，同时选择性�
 
 已完成并合并的 Wave 3 基础切片包括二元 Router、TaskFrame/Plan/Checkpoint 冻结、原子
 Persistence bootstrap、execution start/recovery、Workspace 物化与校验、Plan execution
-context 及其 Runtime composition。当前安全停止点、精确提交、开放 Issue/PR、测试证据和下一
-切片见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+context 及其 Runtime composition，以及 committed-H0 Step activation candidate materialization。
+当前安全停止点、精确提交、Issue/PR 状态、测试证据和下一切片见
+[当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍未完成的关键产品能力：
 
@@ -50,12 +51,15 @@ context 及其 Runtime composition。当前安全停止点、精确提交、开�
 
 ## 下一步
 
-1. 读取 [当前开发状态](ACTIVE_DEVELOPMENT.md)，再用 Git/GitHub 核对其中记录的 SHA、
-   Issue、Draft PR 和 CI；外部状态可能在文档写入后变化，不得猜测。
-2. 先完成当前 Draft PR 的 fixed-head 静态审查、自动化测试和 CI 门禁。只有主对话可以决定
-   Ready、合并和合并顺序。
-3. 合并后以 GitHub merge commit 作为下一 Issue 的唯一 `baseCommit`，发布
-   Runtime Step activation composition Issue。
+1. 读取 [当前开发状态](ACTIVE_DEVELOPMENT.md)，再用 Git/GitHub 核对记录的
+   `main`/`origin/main`、已合并 PR、已关闭 Issue 和是否已有开放的后续实现 Issue；外部状态
+   可能在文档写入后变化，不得猜测。
+2. 本次交接刷新 PR #75 合并后，运行 `git fetch origin`，记录 PR #75 的 GitHub merge commit，
+   并确认本地 `main` 与 `origin/main` 都指向该提交。该新 merge commit 才是下一实现 Issue 的
+   唯一 `baseCommit`；不得使用刷新前的 `958d2e1af58d3d6816f136f75e529a0d53357554`。
+3. 以该 `baseCommit` 先发布并冻结 Runtime Step activation composition Issue。该 Issue 必须只
+   组合 committed-H0 candidate、lease/fence、current context、Persistence
+   authority 和 replay/stale rejection；不得执行 Step effect，也不得实现 Agent Loop。
 4. 每个功能继续使用独立 Issue、worktree、`codex/` 分支和 Draft PR；不得越过
    `ACTIVE_DEVELOPMENT.md` 中的依赖顺序并行实现下游能力。
 
