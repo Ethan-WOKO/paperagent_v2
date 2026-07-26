@@ -39,6 +39,7 @@ class PublicBoundaryTest {
                 StepCompletionRepository.class,
                 StepInterruptionRepository.class,
                 PlanReplanRepository.class,
+                StepRecoveryRepository.class,
                 IdempotencyRepository.class);
 
         for (Class<?> port : ports) {
@@ -75,6 +76,7 @@ class PublicBoundaryTest {
                 InMemoryStepCompletionRepository.class,
                 InMemoryStepInterruptionRepository.class,
                 InMemoryPlanReplanRepository.class,
+                InMemoryStepRecoveryRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
@@ -775,6 +777,61 @@ class PublicBoundaryTest {
                 InMemoryPersistence.class
                         .getDeclaredMethod("planExecutionContexts")
                         .getReturnType());
+    }
+
+    @Test
+    void stepRecoverySurfaceIsExactAndTokenFree()
+            throws Exception {
+        assertTrue(StepRecoveryRepository.class.isInterface());
+        assertEquals(1, StepRecoveryRepository.class.getDeclaredMethods().length);
+        assertMethod(
+                StepRecoveryRepository.class.getDeclaredMethod(
+                        "inspect", PlanId.class),
+                PersistenceResult.class,
+                PlanId.class);
+        assertTrue(StepRecoverySnapshot.class.isSealed());
+        assertEquals(
+                Set.of(PersistedStepRecoveryActive.class),
+                Set.of(StepRecoverySnapshot.class.getPermittedSubclasses()));
+        Map<String, Method> snapshotMethods = Arrays.stream(
+                        StepRecoverySnapshot.class.getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()));
+        assertEquals(Set.of("planId"), snapshotMethods.keySet());
+        assertMethod(snapshotMethods.get("planId"), PlanId.class);
+        assertEquals(
+                List.of(
+                        "taskFrame",
+                        "plan",
+                        "checkpoint",
+                        "activation",
+                        "executionContext"),
+                Arrays.stream(PersistedStepRecoveryActive.class
+                                .getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        io.paperagent.v2.contracts.TaskFrame.class,
+                        io.paperagent.v2.contracts.Plan.class,
+                        VersionedCheckpoint.class,
+                        PersistedStepActivation.class,
+                        java.util.Optional.class),
+                Arrays.stream(PersistedStepRecoveryActive.class
+                                .getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                StepRecoveryRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("stepRecovery")
+                        .getReturnType());
+        assertTrue(Arrays.stream(PersistedStepRecoveryActive.class
+                        .getDeclaredFields())
+                .noneMatch(field -> field.getName().equals("leaseToken")
+                        || field.getType() == LeaseRecord.class
+                        || field.getType() == java.time.Clock.class));
     }
 
     private static void assertMethod(
