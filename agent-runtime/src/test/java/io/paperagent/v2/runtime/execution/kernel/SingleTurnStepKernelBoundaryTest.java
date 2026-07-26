@@ -104,6 +104,20 @@ class SingleTurnStepKernelBoundaryTest {
     }
 
     @Test
+    void snapshotPlanIdMismatchWithCheckpointAndActivationFailsBeforeTurnAndPersistence() {
+        RecoveredActiveStep recovered = SingleTurnStepKernelTestFixtures
+                .recoveredWithPlanIdMismatchedFromCheckpointAndActivation("plan-mismatch");
+        assertRecoveredAuthorityFailsBeforeTurnAndPersistence(recovered);
+    }
+
+    @Test
+    void activationStepMissingFromCurrentPlanFailsBeforeTurnAndPersistence() {
+        RecoveredActiveStep recovered = SingleTurnStepKernelTestFixtures
+                .recoveredWithActivationStepMissingFromCurrentPlan("missing-current-step");
+        assertRecoveredAuthorityFailsBeforeTurnAndPersistence(recovered);
+    }
+
+    @Test
     void nullPersistenceResultFailsClosedAfterOneWrite() {
         RecoveredActiveStep recovered = SingleTurnStepKernelTestFixtures.recovered("null-persistence");
         EffectIntent intent = SingleTurnStepKernelTestFixtures.intent(recovered, "null-persistence");
@@ -142,5 +156,27 @@ class SingleTurnStepKernelBoundaryTest {
         assertEquals(SingleTurnStepKernelProtocolCode.INCONSISTENT_PERSISTED_INTENT,
                 exception.code());
         assertEquals(1, repository.persistCalls());
+    }
+
+    private static void assertRecoveredAuthorityFailsBeforeTurnAndPersistence(
+            RecoveredActiveStep recovered) {
+        AtomicInteger turns = new AtomicInteger();
+        var repository = new SingleTurnStepKernelTestFixtures.RecordingEffectIntentRepository(
+                request -> {
+                    throw new AssertionError("invalid recovery must not persist");
+                });
+
+        SingleTurnStepKernelProtocolException exception = assertThrows(
+                SingleTurnStepKernelProtocolException.class,
+                () -> new DefaultSingleTurnStepKernel(input -> {
+                    turns.incrementAndGet();
+                    return new NoEffectDecision();
+                }, repository).run(new SingleTurnStepKernelRequest(recovered)));
+
+        assertEquals(SingleTurnStepKernelStage.RECOVERED_AUTHORITY, exception.stage());
+        assertEquals(SingleTurnStepKernelProtocolCode.INCONSISTENT_RECOVERED_AUTHORITY,
+                exception.code());
+        assertEquals(0, turns.get());
+        assertEquals(0, repository.persistCalls());
     }
 }

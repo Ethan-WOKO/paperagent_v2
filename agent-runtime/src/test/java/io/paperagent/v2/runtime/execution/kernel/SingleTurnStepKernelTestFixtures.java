@@ -178,6 +178,68 @@ final class SingleTurnStepKernelTestFixtures {
                 recovery, original.lease(), StepRecoveryLeaseDisposition.RETAINED_FOR_RECOVERY);
     }
 
+    static RecoveredActiveStep recoveredWithPlanIdMismatchedFromCheckpointAndActivation(
+            String suffix) {
+        RecoveredActiveStep original = recovered(suffix);
+        Plan originalPlan = original.recovery().plan();
+        Plan mismatchedPlan = new Plan(
+                new PlanId("plan-snapshot-" + suffix),
+                originalPlan.taskFrameId(),
+                originalPlan.revisions());
+        LeaseRecord originalLease = original.lease();
+        LeaseRecord matchingRecoveryPlanLease = new LeaseRecord(
+                mismatchedPlan.id(),
+                originalLease.ownerId(),
+                originalLease.leaseToken(),
+                originalLease.fencingToken(),
+                originalLease.acquiredAt(),
+                originalLease.expiresAt());
+        PersistedStepRecoveryActive recovery = new PersistedStepRecoveryActive(
+                original.recovery().taskFrame(),
+                mismatchedPlan,
+                original.recovery().checkpoint(),
+                original.recovery().activation(),
+                Optional.empty());
+        return new RecoveredActiveStep(
+                recovery,
+                matchingRecoveryPlanLease,
+                StepRecoveryLeaseDisposition.RETAINED_FOR_RECOVERY);
+    }
+
+    static RecoveredActiveStep recoveredWithActivationStepMissingFromCurrentPlan(String suffix) {
+        RecoveredActiveStep original = recovered(suffix);
+        PlanRevision originalRevision = original.recovery().plan().latestRevision();
+        PlanStep originalStep = originalRevision.steps().get(0);
+        PlanStep replacement = new PlanStep(
+                new PlanStepId("step-current-" + suffix),
+                originalStep.intent(),
+                originalStep.expectedOutcome(),
+                originalStep.dependencies(),
+                originalStep.completionCriteria(),
+                originalStep.executionHints());
+        PlanRevision currentRevision = new PlanRevision(
+                originalRevision.id(),
+                originalRevision.taskFrameId(),
+                originalRevision.number(),
+                originalRevision.parentRevisionId(),
+                originalRevision.reason(),
+                originalRevision.createdAt(),
+                List.of(replacement),
+                originalRevision.completedFacts());
+        Plan currentPlan = new Plan(
+                original.recovery().plan().id(),
+                original.recovery().plan().taskFrameId(),
+                List.of(currentRevision));
+        PersistedStepRecoveryActive recovery = new PersistedStepRecoveryActive(
+                original.recovery().taskFrame(),
+                currentPlan,
+                original.recovery().checkpoint(),
+                original.recovery().activation(),
+                Optional.empty());
+        return new RecoveredActiveStep(
+                recovery, original.lease(), StepRecoveryLeaseDisposition.RETAINED_FOR_RECOVERY);
+    }
+
     static EffectIntent intent(RecoveredActiveStep recoveredStep, String suffix) {
         return new EffectIntent(
                 new ToolCallId("call-" + suffix),
