@@ -56,27 +56,31 @@
 - provider-neutral effect identity/replayability 与 durable intent（PR #81，Issue #80）。
 - provider-neutral fenced effect progress/final result persistence 与 Receipt ownership（PR #85，Issue #84）。
 - fenced Step completion 与 append-only revision（PR #89，Issue #88）。
+- fenced active-Step pause、fail、cancel facts（PR #93，Issue #92）。
 
 当前安全停止点：
 
-- PR #89 已合并，Issue #88 已关闭；fenced Step completion 与 append-only revision 已完成。其 fixed
-  head 为 `d1e252475b255e74dd90c081853df6a8c7ff2bba`，GitHub merge commit 为当前 `main` 的
-  `965cf025fcd5ecd7ca2e8630bff4bae532e26626`。审查修正将 completion marker 与 Plan revision
-  绑定，并在不一致时 fail-closed。其证据为 22 个 focused tests、`agent-contracts` 88 tests、
-  `agent-persistence` 214 tests，均为 0 failures、0 errors，两个 fixed-head CI `verify` check 成功，
-  且 `git diff --check` 通过。
-  `965cf025fcd5ecd7ca2e8630bff4bae532e26626` 仅是本次文档刷新 Issue 的 base。本文档 PR 合并后，
-  必须以其 GitHub merge commit 作为 pause/fail/cancel Issue 的唯一 `baseCommit`；精确状态见
+- PR #93 已合并，Issue #92 已关闭；其 final fixed head 为
+  `f794daf5be54b33138eb96fc0ac3846434c2bb1a`，GitHub merge commit 为当前 `main` 和
+  `origin/main` 的 `cf77d58399418bb8656ad2a517eb9f1f624e1104`。
+- 审查修正使 marker-backed 精确 replay 先重建 durable provenance，并在 marker 或相关持久
+  链损坏时 fail-closed；execution-start marker 冻结 current Plan，使 pre-start revision recovery 和
+  Plan projection 移除后的 replay 保持有效。
+- 证据为 25 个 focused tests、`agent-contracts` 88 tests、`agent-persistence` 231 tests、
+  `ExecutionStartRecoveryIntegrationTest` 4 tests，均为 0 failures、0 errors；`git diff --check`
+  通过，两个最终 fixed-head CI `verify` check 成功。
+- 当前是 Issue #94 的文档刷新。该文档 PR 合并后，其 GitHub merge commit 才是创建并冻结
+  fenced replan Issue 的唯一 `baseCommit`；文档 PR 不实现 replan。精确状态见
   [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍待按依赖顺序完成：
 
-- pause/fail/cancel、fenced replan。
-- 原子 Step Recovery inspection 与 Runtime Step Recovery composition。
-- 单轮 Step kernel、bounded Step Agent Loop、bounded repair/replan。
+- fenced replan。
+- atomic Step Recovery inspection 与 Runtime Step Recovery composition。
+- single-turn Step kernel、bounded Step Agent Loop、bounded repair/replan。
 
 Wave 3 完成前不得把这些切片重新集中到单个大 Service，也不得用未审查的 V1 Runtime
-填补缺口。
+填补缺口。V1 一律 `UNASSESSED`，除非后续独立迁移 Issue 在 `MIGRATION_MAP.md` 记录结论。
 
 ## Wave 4：产品闭环
 
