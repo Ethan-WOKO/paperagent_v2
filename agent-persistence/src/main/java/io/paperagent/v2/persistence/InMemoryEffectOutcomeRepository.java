@@ -49,7 +49,7 @@ final class InMemoryEffectOutcomeRepository implements EffectOutcomeRepository {
             InMemoryState.EffectResultMarker finalized =
                     state.effectResults.get(progress.toolCallId());
             if (finalized != null) {
-                if (!isIntactResultMarker(progress.toolCallId(), finalized)) {
+                if (!isIntactResultMarker(state, progress.toolCallId(), finalized)) {
                     return partialState();
                 }
                 return PersistenceResult.rejected(
@@ -128,7 +128,7 @@ final class InMemoryEffectOutcomeRepository implements EffectOutcomeRepository {
             InMemoryState.EffectResultMarker existing =
                     state.effectResults.get(toolCallId);
             if (existing != null) {
-                if (!isIntactResultMarker(toolCallId, existing)) {
+                if (!isIntactResultMarker(state, toolCallId, existing)) {
                     return partialState();
                 }
                 return replayOrConflict(existing, request);
@@ -177,7 +177,7 @@ final class InMemoryEffectOutcomeRepository implements EffectOutcomeRepository {
             if (marker == null) {
                 return PersistenceChecks.notFound("toolCallId");
             }
-            return isIntactResultMarker(toolCallId, marker)
+            return isIntactResultMarker(state, toolCallId, marker)
                     ? PersistenceResult.found(marker.result())
                     : partialState();
         }
@@ -333,7 +333,8 @@ final class InMemoryEffectOutcomeRepository implements EffectOutcomeRepository {
                 && InMemoryEffectIntentRepository.isIntactMarker(toolCallId, intent);
     }
 
-    private boolean isIntactResultMarker(
+    static boolean isIntactResultMarker(
+            InMemoryState state,
             ToolCallId toolCallId,
             InMemoryState.EffectResultMarker marker) {
         if (marker == null
