@@ -57,26 +57,28 @@
 - provider-neutral fenced effect progress/final result persistence 与 Receipt ownership（PR #85，Issue #84）。
 - fenced Step completion 与 append-only revision（PR #89，Issue #88）。
 - fenced active-Step pause、fail、cancel facts（PR #93，Issue #92）。
+- fenced append-only Plan replan（PR #97，Issue #96）。
 
 当前安全停止点：
 
-- PR #93 已合并，Issue #92 已关闭；其 final fixed head 为
-  `f794daf5be54b33138eb96fc0ac3846434c2bb1a`，GitHub merge commit 为当前 `main` 和
-  `origin/main` 的 `cf77d58399418bb8656ad2a517eb9f1f624e1104`。
-- 审查修正使 marker-backed 精确 replay 先重建 durable provenance，并在 marker 或相关持久
-  链损坏时 fail-closed；execution-start marker 冻结 current Plan，使 pre-start revision recovery 和
-  Plan projection 移除后的 replay 保持有效。
-- 证据为 25 个 focused tests、`agent-contracts` 88 tests、`agent-persistence` 231 tests、
-  `ExecutionStartRecoveryIntegrationTest` 4 tests，均为 0 failures、0 errors；`git diff --check`
-  通过，两个最终 fixed-head CI `verify` check 成功。
-- 当前是 Issue #94 的文档刷新。该文档 PR 合并后，其 GitHub merge commit 才是创建并冻结
-  fenced replan Issue 的唯一 `baseCommit`；文档 PR 不实现 replan。精确状态见
-  [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+- Issue #96 已关闭，PR #97 已合并；其 final fixed head 为
+  `ad3e2acf2bdc782fd6af779a2d425410395400d4`，GitHub merge commit
+  `76ab532d769c8e4b83a78ae2c583c046d86f545b` 是当前 `main` 与 `origin/main`。
+- 该 replan authority 仅位于 Steps 之间：源 Plan 必须为 `ACTIVE`，且没有 `ACTIVE`、`PAUSED`、
+  `FAILED` 或 `CANCELLED` Step；它只追加 revision，完成事实和其 Step 定义不可改写，并重置
+  未完成未来 Steps 的 checkpoint state。marker-backed exact replay 先重建 durable provenance 再读
+  Clock，撕裂或不一致的 provenance 必须 fail-closed；不含 pause 后 resume、retry 或 recovery。
+- 证据为 21 个 focused tests、`agent-contracts` 88 tests、`agent-persistence` 242 tests 和 25 个
+  Recovery regression tests，均为 0 failures、0 errors；`git diff --check` 通过，两个最终
+  fixed-head CI `verify` check 成功。
+- 当前是 Issue #98 的文档刷新。该文档 PR 合并后，其 GitHub merge commit 才是创建并冻结
+  **atomic Step Recovery inspection** Issue 的唯一 `baseCommit`；本 PR 不创建下游 Issue 或
+  worktree，不实现任何 Step Recovery 代码。精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍待按依赖顺序完成：
 
-- fenced replan。
-- atomic Step Recovery inspection 与 Runtime Step Recovery composition。
+- atomic Step Recovery inspection。
+- Runtime Step Recovery composition。
 - single-turn Step kernel、bounded Step Agent Loop、bounded repair/replan。
 
 Wave 3 完成前不得把这些切片重新集中到单个大 Service，也不得用未审查的 V1 Runtime
