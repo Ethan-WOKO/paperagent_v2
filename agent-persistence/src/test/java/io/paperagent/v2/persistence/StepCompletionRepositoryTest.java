@@ -172,6 +172,49 @@ class StepCompletionRepositoryTest {
     }
 
     @Test
+    void alteredCurrentCompletionRevisionFailsClosedBeforeDependentActivation() {
+        Harness harness = activated("altered-current-revision");
+        requireApplied(harness.completions().complete(completionRequest(
+                harness, PersistenceFixtures.STEP_1,
+                "altered-current-revision", List.of())));
+        Plan current = harness.state().plans.get(harness.plan().id());
+        PlanRevision completed = current.latestRevision();
+        PlanRevision altered = new PlanRevision(
+                completed.id(),
+                completed.taskFrameId(),
+                completed.number(),
+                completed.parentRevisionId(),
+                "altered completion revision",
+                completed.createdAt(),
+                completed.steps(),
+                completed.completedFacts());
+        List<PlanRevision> revisions = new ArrayList<>(current.revisions());
+        revisions.set(revisions.size() - 1, altered);
+        Plan alteredPlan = new Plan(
+                current.id(), current.taskFrameId(), revisions);
+        harness.state().plans.put(harness.plan().id(), alteredPlan);
+        AuthoritySnapshot before = snapshot(harness.state());
+
+        assertFailure(harness.activations().activate(
+                        PersistenceFixtures.stepActivationRequest(
+                                alteredPlan,
+                                harness.state().checkpoints.get(harness.plan().id())
+                                        .checkpoint(),
+                                4,
+                                4,
+                                TOKEN,
+                                1,
+                                PersistenceFixtures.STEP_2,
+                                "activation-after-altered-revision",
+                                5)),
+                PersistenceErrorCode.STEP_ACTIVATION_PARTIAL_STATE,
+                "stepActivation");
+
+        assertUnchangedExceptCompletion(before, harness.state());
+        assertEquals(alteredPlan, harness.state().plans.get(harness.plan().id()));
+    }
+
+    @Test
     void staleInactiveAndMalformedCandidatesFailWithoutAnyBusinessWrite() {
         Harness harness = activated("failures");
         AuthoritySnapshot before = snapshot(harness.state());

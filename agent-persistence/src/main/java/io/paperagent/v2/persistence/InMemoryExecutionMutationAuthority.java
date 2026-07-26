@@ -520,6 +520,9 @@ final class InMemoryExecutionMutationAuthority {
         PlanRevision previousRevision = plan == null
                 ? null
                 : findRevision(plan, previous.revisionNumber());
+        PlanRevision authoritativeRevision = plan == null
+                ? null
+                : findRevision(plan, revision.number());
         return request.planId().equals(planId)
                 && result.planId().equals(planId)
                 && request.stepId().equals(result.stepId())
@@ -543,8 +546,9 @@ final class InMemoryExecutionMutationAuthority {
                 && revision.number() == previous.revisionNumber() + 1
                 && revision.parentRevisionId().equals(
                         java.util.Optional.of(previous.revisionId()))
-                && (plan == null || isExactCompletionRevision(
-                        previousRevision, request, revision))
+                && (plan == null || revision.equals(authoritativeRevision)
+                        && isExactCompletionRevision(
+                                previousRevision, request, revision))
                 && persisted.version()
                         == request.expectedCheckpointVersion() + 1
                 && checkpoint.planId().equals(planId)
