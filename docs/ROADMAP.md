@@ -54,19 +54,21 @@
 - committed-H0 Step activation candidate materialization。
 - Runtime Step activation composition（PR #77，Issue #76）。
 - provider-neutral effect identity/replayability 与 durable intent（PR #81，Issue #80）。
+- provider-neutral fenced effect progress/final result persistence 与 Receipt ownership（PR #85，Issue #84）。
 
 当前安全停止点：
 
-- PR #81 已合并，Issue #80 已关闭；provider-neutral effect identity/replayability 与 durable intent
-  已完成。其证据为 12 个定向 tests、`agent-contracts` 85 tests、`agent-persistence` 191 tests，均为
-  0 failures、0 errors，且两个 fixed-head CI check 成功。
-  `1ec4369c4d12302774f85291f3de9083110a7970` 仅是本次文档刷新 Issue 的 base。本文档 PR 合并后，
-  必须以其 GitHub merge commit 作为 fenced effect result/progress 与 Receipt ownership Issue 的唯一
-  `baseCommit`；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+- PR #85 已合并，Issue #84 已关闭；provider-neutral fenced effect progress/final result persistence
+  与 Receipt ownership 已完成。其 fixed head 为 `a96376771db3dbe8bc84aaa7ce6f4912a07b5b22`，GitHub
+  merge commit 为 `c54ebf6487186c55592402da10669b93c2d89b9a`。其证据为 12 个 focused tests、
+  `agent-contracts` 88 tests、`agent-persistence` 200 tests，均为 0 failures、0 errors，两个 fixed-head
+  CI `verify` check 成功，且 `git diff --check` 通过。
+  `c54ebf6487186c55592402da10669b93c2d89b9a` 仅是本次文档刷新 Issue 的 base。本文档 PR 合并后，
+  必须以其 GitHub merge commit 作为 completion/revision Issue 的唯一 `baseCommit`；精确状态见
+  [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍待按依赖顺序完成：
 
-- fenced effect result/progress 和 Receipt ownership。
 - completion/revision、pause/fail/cancel、fenced replan。
 - 原子 Step Recovery inspection 与 Runtime Step Recovery composition。
 - 单轮 Step kernel、bounded Step Agent Loop、bounded repair/replan。
