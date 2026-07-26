@@ -168,7 +168,7 @@ final class InMemoryEffectIntentRepository implements EffectIntentRepository {
         return PersistenceResult.replayed(marker.result());
     }
 
-    private static boolean isIntactMarker(
+    static boolean isIntactMarker(
             ToolCallId toolCallId,
             InMemoryState.EffectIntentMarker marker) {
         if (marker == null

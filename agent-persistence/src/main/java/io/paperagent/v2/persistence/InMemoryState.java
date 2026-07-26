@@ -44,6 +44,10 @@ final class InMemoryState {
             new LinkedHashMap<>();
     final Map<ToolCallId, EffectIntentMarker> effectIntents =
             new LinkedHashMap<>();
+    final Map<ToolCallId, NavigableMap<Long, EffectProgressMarker>>
+            effectProgresses = new LinkedHashMap<>();
+    final Map<ToolCallId, EffectResultMarker> effectResults =
+            new LinkedHashMap<>();
     final Map<PlanId, PlanExecutionContextReservationMarker>
             planExecutionContextReservations = new LinkedHashMap<>();
     final Map<PlanId, PlanExecutionContextConfirmationMarker>
@@ -151,6 +155,30 @@ final class InMemoryState {
         public String toString() {
             return "EffectIntentMarker["
                     + "request=<provided>, result=<provided>, "
+                    + "leaseOwnerId=<provided>]";
+        }
+    }
+
+    record EffectProgressMarker(
+            EffectProgressRequest request,
+            PersistedEffectProgress result,
+            String leaseOwnerId) {
+
+        @Override
+        public String toString() {
+            return "EffectProgressMarker[request=<provided>, result=<provided>, "
+                    + "leaseOwnerId=<provided>]";
+        }
+    }
+
+    record EffectResultMarker(
+            EffectResultRequest request,
+            PersistedEffectResult result,
+            String leaseOwnerId) {
+
+        @Override
+        public String toString() {
+            return "EffectResultMarker[request=<provided>, result=<provided>, "
                     + "leaseOwnerId=<provided>]";
         }
     }

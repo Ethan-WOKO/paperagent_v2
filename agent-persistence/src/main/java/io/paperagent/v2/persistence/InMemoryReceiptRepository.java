@@ -16,6 +16,11 @@ final class InMemoryReceiptRepository implements ReceiptRepository {
             return PersistenceChecks.invalid("receipt");
         }
         synchronized (state.monitor) {
+            if (state.effectIntents.containsKey(receipt.toolCallId())) {
+                return PersistenceResult.rejected(
+                        PersistenceErrorCode.EFFECT_RECEIPT_OWNERSHIP_REQUIRED,
+                        "receipt.toolCallId");
+            }
             ExecutionReceipt existing = state.receipts.get(receipt.id());
             if (existing == null) {
                 state.receipts.put(receipt.id(), receipt);
