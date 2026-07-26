@@ -34,6 +34,8 @@ public record PersistedStepCompletion(
                     "completedCheckpoint.version must be at least 4");
         }
         Checkpoint checkpoint = completedCheckpoint.checkpoint();
+        boolean allStepsSucceeded = checkpoint.stepStates().values().stream()
+                .allMatch(state -> state == StepExecutionState.SUCCEEDED);
         if (!completionEvent.planId().equals(planId)
                 || !checkpoint.planId().equals(planId)
                 || !completionEvent.taskFrameId().equals(checkpoint.taskFrameId())
@@ -44,14 +46,10 @@ public record PersistedStepCompletion(
                 || checkpoint.stepStates().get(stepId) != StepExecutionState.SUCCEEDED
                 || completedRevision.completedFacts().get(stepId) == null
                 || !completedRevision.completedFacts().get(stepId).stepId().equals(stepId)
-                || checkpoint.planState() == PlanExecutionState.SUCCEEDED
-                        && checkpoint.stepStates().values().stream()
-                                .anyMatch(state ->
-                                        state != StepExecutionState.SUCCEEDED)
-                || checkpoint.planState() != PlanExecutionState.SUCCEEDED
-                        && checkpoint.stepStates().values().stream()
-                                .allMatch(state ->
-                                        state == StepExecutionState.SUCCEEDED)) {
+                || allStepsSucceeded
+                        && checkpoint.planState() != PlanExecutionState.SUCCEEDED
+                || !allStepsSucceeded
+                        && checkpoint.planState() != PlanExecutionState.ACTIVE) {
             throw new IllegalArgumentException(
                     "completion components must describe one succeeded completion");
         }

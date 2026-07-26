@@ -121,6 +121,31 @@ class StepCompletionRepositoryBoundaryTest {
                 request.completionEvent(),
                 wrongTaskFrame,
                 new VersionedCheckpoint(4, request.completedCheckpoint())));
+        for (PlanExecutionState invalidPlanState : List.of(
+                PlanExecutionState.NOT_STARTED,
+                PlanExecutionState.PAUSED,
+                PlanExecutionState.FAILED,
+                PlanExecutionState.CANCELLED)) {
+            Checkpoint invalidPlanStateCheckpoint = new Checkpoint(
+                    request.completedCheckpoint().taskFrameId(),
+                    request.completedCheckpoint().planId(),
+                    request.completedCheckpoint().revisionId(),
+                    request.completedCheckpoint().revisionNumber(),
+                    request.completedCheckpoint().lastEventSequence(),
+                    invalidPlanState,
+                    request.completedCheckpoint().stepStates(),
+                    request.completedCheckpoint().receiptReferences(),
+                    request.completedCheckpoint().createdAt());
+            assertThrows(IllegalArgumentException.class, () ->
+                    new PersistedStepCompletion(
+                            request.planId(),
+                            request.stepId(),
+                            "owner",
+                            1,
+                            request.completionEvent(),
+                            request.completedRevision(),
+                            new VersionedCheckpoint(4, invalidPlanStateCheckpoint)));
+        }
     }
 
     @Test
