@@ -37,20 +37,25 @@ context 及其 Runtime composition、committed-H0 Step activation candidate mate
 Step activation composition（PR #77，Issue #76）、provider-neutral effect identity/replayability 与
 durable intent（PR #81，Issue #80）、provider-neutral fenced effect progress/final result persistence
 与 Receipt ownership（PR #85，Issue #84）、fenced Step completion 与 append-only revision
-（PR #89，Issue #88），以及 fenced active-Step pause、fail、cancel facts（PR #93，Issue #92）。
+（PR #89，Issue #88）、fenced active-Step pause、fail、cancel facts（PR #93，Issue #92），以及
+fenced append-only Plan replan（PR #97，Issue #96）。
 
-PR #93 的 final fixed head 是 `f794daf5be54b33138eb96fc0ac3846434c2bb1a`，GitHub merge commit 是
-当前 `main` 与 `origin/main` 的 `cf77d58399418bb8656ad2a517eb9f1f624e1104`。其修正保证
-marker-backed exact replay 先重建 durable provenance、损坏时 fail-closed；execution-start marker 冻结
-current Plan，使 pre-start revision recovery 与 Plan projection 移除后的 replay 仍可验证。
-验证为 25 个 focused tests、`agent-contracts` 88 tests、`agent-persistence` 231 tests 和定向
-`ExecutionStartRecoveryIntegrationTest` 4 tests，均为 0 failures、0 errors；`git diff --check`
-和两个最终 fixed-head CI `verify` check 均已通过。当前安全停止点、精确提交、Issue/PR 状态、
-测试证据和下一切片见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+Issue #96 已关闭，PR #97 已合并。其 final fixed head 是
+`ad3e2acf2bdc782fd6af779a2d425410395400d4`，GitHub merge commit
+`76ab532d769c8e4b83a78ae2c583c046d86f545b` 是当前 `main` 与 `origin/main`。该切片只在
+Steps 之间允许 replan：源 Plan 必须为 `ACTIVE`，且不存在 `ACTIVE`、`PAUSED`、`FAILED` 或
+`CANCELLED` Step；只追加新 revision，已完成事实及其 Step 定义保持不可变，未完成未来 Steps 的
+checkpoint state 会重置。marker-backed exact replay 必须先重建 durable provenance、再读取 Clock；
+provenance 撕裂或不一致时 fail-closed。它不实现 pause 后 resume、retry 或任何 recovery 行为。
+
+验证为 21 个 focused tests、`agent-contracts` 88 tests、`agent-persistence` 242 tests 和 25 个
+Recovery regression tests，均为 0 failures、0 errors；`git diff --check` 与两个对应最终 fixed head 的
+CI `verify` check 均已成功。当前安全停止点、精确状态、测试证据和下一切片见
+[当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍未完成的关键产品能力：
 
-- fenced replan、Step Recovery 主链。
+- atomic Step Recovery inspection 与 Runtime Step Recovery composition。
 - 单轮 Step kernel、bounded Step Agent Loop 和 bounded repair/replan。
 - 真实模型或执行后端、耐久数据库适配器和生产级隔离。
 - 产品 API、Web UI、用户接受/拒绝与新 ProjectVersion 闭环。
@@ -66,15 +71,17 @@ current Plan，使 pre-start revision recovery 与 Plan projection 移除后的 
    `DEVELOPMENT_PROCESS.md`、`ROADMAP.md` 和 [当前开发状态](ACTIVE_DEVELOPMENT.md)，再用 Git/GitHub
    核对记录的 `main`/`origin/main`、已合并 PR、已关闭 Issue 和是否已有开放的后续实现 Issue；
    外部状态可能在文档写入后变化，不得猜测。
-2. 本次交接刷新 PR 合并后，运行 `git fetch origin`，记录该 PR 的 GitHub merge commit，并确认
-   本地 `main` 与 `origin/main` 都指向该提交。该提交才是下一功能 fenced replan Issue 的唯一
-   `baseCommit`；不能复用 `cf77d58399418bb8656ad2a517eb9f1f624e1104`。
-3. 只以该 `baseCommit` 发布并冻结 fenced replan Issue，明确目标、非目标、owned paths、冻结契约、
-   依赖、验收、必跑检查、停止条件和合并顺序。文档 PR 不创建 worktree 或开始实现 replan。
+2. 当前交接刷新 Issue 合并后，运行 `git fetch origin`，记录该文档 PR 的 GitHub merge commit，并确认
+   本地 `main` 与 `origin/main` 都指向该提交。该提交才是名为 **atomic Step Recovery inspection** 的
+   下一功能 Issue 的唯一 `baseCommit`；不能复用
+   `76ab532d769c8e4b83a78ae2c583c046d86f545b`。
+3. 只以该 `baseCommit` 发布并冻结 **atomic Step Recovery inspection** Issue，明确目标、非目标、
+   owned paths、冻结契约、依赖、验收、必跑检查、停止条件和合并顺序。本交接 PR 不创建该下游
+   Issue、worktree 或实现任何 Step Recovery 代码。
 4. 只有 Issue 冻结后，实施子对话才使用独立 worktree、`codex/` 分支和 Draft PR；它负责实现、
-   测试、commit、push，主对话固定 head 审查、检查 CI 并决定合并。后续严格按 fenced replan、
-   atomic Step Recovery inspection、Runtime Step Recovery composition、single-turn Step kernel、
-   bounded Step Agent Loop、bounded repair/replan 的顺序推进。
+   测试、commit、push，主对话固定 head 审查、检查 CI 并决定合并。后续严格按 atomic Step Recovery
+   inspection、Runtime Step Recovery composition、single-turn Step kernel、bounded Step Agent Loop、
+   bounded repair/replan 的顺序推进。
 
 ## 新主对话建议指令
 
