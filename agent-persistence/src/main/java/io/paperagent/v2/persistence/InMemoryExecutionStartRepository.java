@@ -57,6 +57,7 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                     || state.executionMutationHeads.containsKey(request.planId())
                     || state.executionMutationLinks.containsKey(request.planId())
                     || state.stepActivations.containsKey(request.planId())
+                    || state.stepCompletions.containsKey(request.planId())
                     || state.planExecutionContextReservations
                             .containsKey(request.planId())
                     || state.planExecutionContextConfirmations
@@ -137,6 +138,8 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
             state.executionMutationLinks.put(request.planId(), List.of());
             state.stepActivations.put(
                     request.planId(), new LinkedHashMap<>());
+            state.stepCompletions.put(
+                    request.planId(), new LinkedHashMap<>());
             return PersistenceResult.applied(result);
         }
     }
@@ -152,6 +155,7 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                 || state.executionMutationHeads.containsKey(planId)
                 || state.executionMutationLinks.containsKey(planId)
                 || state.stepActivations.containsKey(planId)
+                || state.stepCompletions.containsKey(planId)
                 || state.planExecutionContextReservations.containsKey(planId)
                 || state.planExecutionContextConfirmations.containsKey(planId)
                 || InMemoryPlanExecutionContextAuthority

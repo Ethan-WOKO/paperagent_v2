@@ -42,6 +42,8 @@ final class InMemoryState {
             new LinkedHashMap<>();
     final Map<PlanId, Map<EventId, StepActivationMarker>> stepActivations =
             new LinkedHashMap<>();
+    final Map<PlanId, Map<EventId, StepCompletionMarker>> stepCompletions =
+            new LinkedHashMap<>();
     final Map<ToolCallId, EffectIntentMarker> effectIntents =
             new LinkedHashMap<>();
     final Map<ToolCallId, NavigableMap<Long, EffectProgressMarker>>
@@ -111,6 +113,11 @@ final class InMemoryState {
                     "STEP_ACTIVATION", eventId);
         }
 
+        static ExecutionMutationMarkerIdentity stepCompletion(EventId eventId) {
+            return new ExecutionMutationMarkerIdentity(
+                    "STEP_COMPLETION", eventId);
+        }
+
         @Override
         public String toString() {
             return "ExecutionMutationMarkerIdentity["
@@ -142,6 +149,18 @@ final class InMemoryState {
             return "StepActivationMarker["
                     + "request=<provided>, "
                     + "result=<provided>, "
+                    + "provenanceLink=<provided>]";
+        }
+    }
+
+    record StepCompletionMarker(
+            StepCompletionRequest request,
+            PersistedStepCompletion result,
+            ExecutionMutationLink provenanceLink) {
+
+        @Override
+        public String toString() {
+            return "StepCompletionMarker[request=<provided>, result=<provided>, "
                     + "provenanceLink=<provided>]";
         }
     }

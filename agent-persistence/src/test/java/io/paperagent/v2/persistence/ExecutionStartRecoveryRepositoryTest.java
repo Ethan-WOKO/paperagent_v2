@@ -405,6 +405,43 @@ class ExecutionStartRecoveryRepositoryTest {
     }
 
     @Test
+    void validActivationCompletionActivationChainIsAdvanced() {
+        Harness harness = bootstrappedHarness();
+        PersistedExecutionStart started = start(harness, TOKEN, "start-completion-chain");
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(harness.state()),
+                PersistenceFixtures.plan(),
+                TOKEN,
+                started.fencingToken(),
+                PersistenceFixtures.workspaceSpec("recovery-completion-chain"));
+        requireApplied(harness.activations().activate(
+                PersistenceFixtures.stepActivationRequest(
+                        PersistenceFixtures.plan(),
+                        TOKEN,
+                        started.fencingToken(),
+                        "activation-completion-chain")));
+        requireApplied(harness.completions().complete(
+                completionRequest(harness, "completion-chain")));
+        Plan completed = harness.state().plans.get(PersistenceFixtures.PLAN_ID);
+        requireApplied(harness.activations().activate(
+                PersistenceFixtures.stepActivationRequest(
+                        completed,
+                        harness.state().checkpoints
+                                .get(PersistenceFixtures.PLAN_ID)
+                                .checkpoint(),
+                        4,
+                        4,
+                        TOKEN,
+                        started.fencingToken(),
+                        PersistenceFixtures.STEP_2,
+                        "activation-after-completion-chain",
+                        5)));
+
+        assertAdvanced(harness.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+    }
+
+    @Test
     void committedRecoveryAcceptsNoneReservedAndConfirmedContext() {
         Harness none = bootstrappedHarness();
         start(none, TOKEN, "start-context-none");
@@ -1093,6 +1130,58 @@ class ExecutionStartRecoveryRepositoryTest {
                 Map.of(PersistenceFixtures.STEP_1, fact));
     }
 
+    private static StepCompletionRequest completionRequest(
+            Harness harness,
+            String suffix) {
+        Plan plan = harness.state().plans.get(PersistenceFixtures.PLAN_ID);
+        Checkpoint source = harness.state().checkpoints
+                .get(PersistenceFixtures.PLAN_ID)
+                .checkpoint();
+        CompletionFact fact = new CompletionFact(
+                PersistenceFixtures.STEP_1,
+                "completion-" + suffix,
+                source.createdAt().plusSeconds(1),
+                List.of());
+        PlanRevision completedRevision = new PlanRevision(
+                new PlanRevisionId("revision-" + suffix),
+                plan.taskFrameId(),
+                2,
+                Optional.of(plan.latestRevision().id()),
+                "complete first step",
+                source.createdAt().plusSeconds(1),
+                plan.latestRevision().steps(),
+                Map.of(PersistenceFixtures.STEP_1, fact));
+        Checkpoint completedCheckpoint = new Checkpoint(
+                source.taskFrameId(),
+                source.planId(),
+                completedRevision.id(),
+                completedRevision.number(),
+                4,
+                PlanExecutionState.ACTIVE,
+                Map.of(
+                        PersistenceFixtures.STEP_1, StepExecutionState.SUCCEEDED,
+                        PersistenceFixtures.STEP_2, StepExecutionState.NOT_STARTED),
+                List.of(),
+                source.createdAt().plusSeconds(1));
+        return new StepCompletionRequest(
+                plan.id(),
+                TOKEN,
+                1,
+                plan.latestRevision().id(),
+                plan.latestRevision().number(),
+                3,
+                3,
+                PersistenceFixtures.STEP_1,
+                fact,
+                PersistenceFixtures.event(
+                        "event-" + suffix,
+                        plan.taskFrameId(),
+                        plan.id(),
+                        4),
+                completedRevision,
+                completedCheckpoint);
+    }
+
     private static PersistedExecutionStart start(
             Harness harness,
             String leaseToken,
@@ -1156,6 +1245,7 @@ class ExecutionStartRecoveryRepositoryTest {
                 new InMemoryLeaseRepository(state),
                 new InMemoryExecutionStartRepository(state),
                 new InMemoryStepActivationRepository(state),
+                new InMemoryStepCompletionRepository(state),
                 new InMemoryExecutionStartRecoveryRepository(state));
     }
 
@@ -1207,6 +1297,7 @@ class ExecutionStartRecoveryRepositoryTest {
             LeaseRepository leases,
             ExecutionStartRepository executionStarts,
             StepActivationRepository activations,
+            StepCompletionRepository completions,
             ExecutionStartRecoveryRepository recovery) {
     }
 }

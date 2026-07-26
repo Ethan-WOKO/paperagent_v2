@@ -14,6 +14,7 @@ public final class InMemoryPersistence {
     private final ExecutionStartRepository executionStarts;
     private final PlanExecutionContextRepository planExecutionContexts;
     private final StepActivationRepository stepActivations;
+    private final StepCompletionRepository stepCompletions;
     private final EffectIntentRepository effectIntents;
     private final EffectOutcomeRepository effectOutcomes;
     private final ExecutionStartRecoveryRepository executionStartRecovery;
@@ -37,6 +38,7 @@ public final class InMemoryPersistence {
         planExecutionContexts =
                 new InMemoryPlanExecutionContextRepository(state);
         stepActivations = new InMemoryStepActivationRepository(state);
+        stepCompletions = new InMemoryStepCompletionRepository(state);
         effectIntents = new InMemoryEffectIntentRepository(state);
         effectOutcomes = new InMemoryEffectOutcomeRepository(state);
         executionStartRecovery = new InMemoryExecutionStartRecoveryRepository(state);
@@ -85,6 +87,10 @@ public final class InMemoryPersistence {
 
     public StepActivationRepository stepActivations() {
         return stepActivations;
+    }
+
+    public StepCompletionRepository stepCompletions() {
+        return stepCompletions;
     }
 
     public EffectIntentRepository effectIntents() {

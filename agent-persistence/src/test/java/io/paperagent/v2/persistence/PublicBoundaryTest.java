@@ -36,6 +36,7 @@ class PublicBoundaryTest {
                 ExecutionStartRecoveryRepository.class,
                 PlanExecutionContextRepository.class,
                 StepActivationRepository.class,
+                StepCompletionRepository.class,
                 IdempotencyRepository.class);
 
         for (Class<?> port : ports) {
@@ -69,6 +70,7 @@ class PublicBoundaryTest {
                 InMemoryPlanExecutionContextRepository.class,
                 InMemoryPlanExecutionContextAuthority.class,
                 InMemoryStepActivationRepository.class,
+                InMemoryStepCompletionRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
@@ -359,6 +361,88 @@ class PublicBoundaryTest {
                 StepActivationRepository.class,
                 InMemoryPersistence.class
                         .getDeclaredMethod("stepActivations")
+                        .getReturnType());
+    }
+
+    @Test
+    void stepCompletionSurfaceIsExactAndTokenFreeInResult()
+            throws Exception {
+        assertTrue(StepCompletionRepository.class.isInterface());
+        assertEquals(
+                1,
+                StepCompletionRepository.class.getDeclaredMethods().length);
+        assertMethod(
+                StepCompletionRepository.class.getDeclaredMethod(
+                        "complete", StepCompletionRequest.class),
+                PersistenceResult.class,
+                StepCompletionRequest.class);
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "expectedRevisionId",
+                        "expectedRevisionNumber",
+                        "expectedCheckpointVersion",
+                        "expectedEventHeadSequence",
+                        "stepId",
+                        "completionFact",
+                        "completionEvent",
+                        "completedRevision",
+                        "completedCheckpoint"),
+                Arrays.stream(StepCompletionRequest.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        io.paperagent.v2.contracts.PlanRevisionId.class,
+                        long.class,
+                        long.class,
+                        long.class,
+                        io.paperagent.v2.contracts.PlanStepId.class,
+                        io.paperagent.v2.contracts.CompletionFact.class,
+                        EventEnvelope.class,
+                        io.paperagent.v2.contracts.PlanRevision.class,
+                        io.paperagent.v2.contracts.Checkpoint.class),
+                Arrays.stream(StepCompletionRequest.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "stepId",
+                        "leaseOwnerId",
+                        "fencingToken",
+                        "completionEvent",
+                        "completedRevision",
+                        "completedCheckpoint"),
+                Arrays.stream(PersistedStepCompletion.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        io.paperagent.v2.contracts.PlanStepId.class,
+                        String.class,
+                        long.class,
+                        EventEnvelope.class,
+                        io.paperagent.v2.contracts.PlanRevision.class,
+                        VersionedCheckpoint.class),
+                Arrays.stream(PersistedStepCompletion.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertTrue(Arrays.stream(PersistedStepCompletion.class.getRecordComponents())
+                .noneMatch(component ->
+                        component.getName().equals("leaseToken")
+                                || component.getType()
+                                        == StepCompletionRequest.class));
+        assertEquals(
+                StepCompletionRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("stepCompletions")
                         .getReturnType());
     }
 
