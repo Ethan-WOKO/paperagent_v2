@@ -58,6 +58,9 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                     || state.executionMutationLinks.containsKey(request.planId())
                     || state.stepActivations.containsKey(request.planId())
                     || state.stepCompletions.containsKey(request.planId())
+                    || state.stepPauses.containsKey(request.planId())
+                    || state.stepFailures.containsKey(request.planId())
+                    || state.stepCancellations.containsKey(request.planId())
                     || state.planExecutionContextReservations
                             .containsKey(request.planId())
                     || state.planExecutionContextConfirmations
@@ -124,7 +127,7 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                     request.startEvent(),
                     started);
             InMemoryState.ExecutionStartMarker committedMarker =
-                    new InMemoryState.ExecutionStartMarker(request, result);
+                    new InMemoryState.ExecutionStartMarker(request, result, plan);
             NavigableMap<Long, EventEnvelope> committedStream = new TreeMap<>();
             committedStream.put(1L, request.startEvent());
 
@@ -140,6 +143,9 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                     request.planId(), new LinkedHashMap<>());
             state.stepCompletions.put(
                     request.planId(), new LinkedHashMap<>());
+            state.stepPauses.put(request.planId(), new LinkedHashMap<>());
+            state.stepFailures.put(request.planId(), new LinkedHashMap<>());
+            state.stepCancellations.put(request.planId(), new LinkedHashMap<>());
             return PersistenceResult.applied(result);
         }
     }
@@ -156,6 +162,9 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                 || state.executionMutationLinks.containsKey(planId)
                 || state.stepActivations.containsKey(planId)
                 || state.stepCompletions.containsKey(planId)
+                || state.stepPauses.containsKey(planId)
+                || state.stepFailures.containsKey(planId)
+                || state.stepCancellations.containsKey(planId)
                 || state.planExecutionContextReservations.containsKey(planId)
                 || state.planExecutionContextConfirmations.containsKey(planId)
                 || InMemoryPlanExecutionContextAuthority

@@ -44,6 +44,12 @@ final class InMemoryState {
             new LinkedHashMap<>();
     final Map<PlanId, Map<EventId, StepCompletionMarker>> stepCompletions =
             new LinkedHashMap<>();
+    final Map<PlanId, Map<EventId, StepPauseMarker>> stepPauses =
+            new LinkedHashMap<>();
+    final Map<PlanId, Map<EventId, StepFailMarker>> stepFailures =
+            new LinkedHashMap<>();
+    final Map<PlanId, Map<EventId, StepCancelMarker>> stepCancellations =
+            new LinkedHashMap<>();
     final Map<ToolCallId, EffectIntentMarker> effectIntents =
             new LinkedHashMap<>();
     final Map<ToolCallId, NavigableMap<Long, EffectProgressMarker>>
@@ -78,11 +84,19 @@ final class InMemoryState {
 
     record ExecutionStartMarker(
             ExecutionStartRequest request,
-            PersistedExecutionStart result) {
+            PersistedExecutionStart result,
+            Plan startPlan) {
+
+        ExecutionStartMarker(
+                ExecutionStartRequest request,
+                PersistedExecutionStart result) {
+            this(request, result, null);
+        }
 
         @Override
         public String toString() {
-            return "ExecutionStartMarker[request=<provided>, result=<provided>]";
+            return "ExecutionStartMarker[request=<provided>, result=<provided>, "
+                    + "startPlan=<provided>]";
         }
     }
 
@@ -116,6 +130,18 @@ final class InMemoryState {
         static ExecutionMutationMarkerIdentity stepCompletion(EventId eventId) {
             return new ExecutionMutationMarkerIdentity(
                     "STEP_COMPLETION", eventId);
+        }
+
+        static ExecutionMutationMarkerIdentity stepPause(EventId eventId) {
+            return new ExecutionMutationMarkerIdentity("STEP_PAUSE", eventId);
+        }
+
+        static ExecutionMutationMarkerIdentity stepFail(EventId eventId) {
+            return new ExecutionMutationMarkerIdentity("STEP_FAIL", eventId);
+        }
+
+        static ExecutionMutationMarkerIdentity stepCancel(EventId eventId) {
+            return new ExecutionMutationMarkerIdentity("STEP_CANCEL", eventId);
         }
 
         @Override
@@ -161,6 +187,42 @@ final class InMemoryState {
         @Override
         public String toString() {
             return "StepCompletionMarker[request=<provided>, result=<provided>, "
+                    + "provenanceLink=<provided>]";
+        }
+    }
+
+    record StepPauseMarker(
+            StepPauseRequest request,
+            PersistedStepInterruption result,
+            ExecutionMutationLink provenanceLink) {
+
+        @Override
+        public String toString() {
+            return "StepPauseMarker[request=<provided>, result=<provided>, "
+                    + "provenanceLink=<provided>]";
+        }
+    }
+
+    record StepFailMarker(
+            StepFailRequest request,
+            PersistedStepInterruption result,
+            ExecutionMutationLink provenanceLink) {
+
+        @Override
+        public String toString() {
+            return "StepFailMarker[request=<provided>, result=<provided>, "
+                    + "provenanceLink=<provided>]";
+        }
+    }
+
+    record StepCancelMarker(
+            StepCancelRequest request,
+            PersistedStepInterruption result,
+            ExecutionMutationLink provenanceLink) {
+
+        @Override
+        public String toString() {
+            return "StepCancelMarker[request=<provided>, result=<provided>, "
                     + "provenanceLink=<provided>]";
         }
     }

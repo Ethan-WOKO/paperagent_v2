@@ -37,6 +37,7 @@ class PublicBoundaryTest {
                 PlanExecutionContextRepository.class,
                 StepActivationRepository.class,
                 StepCompletionRepository.class,
+                StepInterruptionRepository.class,
                 IdempotencyRepository.class);
 
         for (Class<?> port : ports) {
@@ -71,6 +72,7 @@ class PublicBoundaryTest {
                 InMemoryPlanExecutionContextAuthority.class,
                 InMemoryStepActivationRepository.class,
                 InMemoryStepCompletionRepository.class,
+                InMemoryStepInterruptionRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
@@ -443,6 +445,97 @@ class PublicBoundaryTest {
                 StepCompletionRepository.class,
                 InMemoryPersistence.class
                         .getDeclaredMethod("stepCompletions")
+                        .getReturnType());
+    }
+
+    @Test
+    void stepInterruptionSurfaceIsExactAndStateBearingTextIsRedacted()
+            throws Exception {
+        assertTrue(StepInterruptionRepository.class.isInterface());
+        Map<String, Method> methods = Arrays.stream(
+                        StepInterruptionRepository.class.getDeclaredMethods())
+                .collect(Collectors.toUnmodifiableMap(
+                        Method::getName,
+                        Function.identity()));
+        assertEquals(Set.of("pause", "fail", "cancel"), methods.keySet());
+        assertMethod(
+                methods.get("pause"),
+                PersistenceResult.class,
+                StepPauseRequest.class);
+        assertMethod(
+                methods.get("fail"),
+                PersistenceResult.class,
+                StepFailRequest.class);
+        assertMethod(
+                methods.get("cancel"),
+                PersistenceResult.class,
+                StepCancelRequest.class);
+        assertFalse(methods.containsKey("resume"));
+        assertFalse(methods.containsKey("transition"));
+
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "expectedRevisionId",
+                        "expectedRevisionNumber",
+                        "expectedCheckpointVersion",
+                        "expectedEventHeadSequence",
+                        "stepId",
+                        "pauseEvent",
+                        "pausedCheckpoint"),
+                Arrays.stream(StepPauseRequest.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "expectedRevisionId",
+                        "expectedRevisionNumber",
+                        "expectedCheckpointVersion",
+                        "expectedEventHeadSequence",
+                        "stepId",
+                        "failureEvent",
+                        "failedCheckpoint"),
+                Arrays.stream(StepFailRequest.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "expectedRevisionId",
+                        "expectedRevisionNumber",
+                        "expectedCheckpointVersion",
+                        "expectedEventHeadSequence",
+                        "stepId",
+                        "cancellationEvent",
+                        "cancelledCheckpoint"),
+                Arrays.stream(StepCancelRequest.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "stepId",
+                        "kind",
+                        "leaseOwnerId",
+                        "fencingToken",
+                        "interruptionEvent",
+                        "interruptedCheckpoint"),
+                Arrays.stream(PersistedStepInterruption.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals("<provided>", StepInterruptionKind.PAUSE.toString());
+        assertFalse(StepInterruptionKind.PAUSE.toString().contains("PAUSE"));
+        assertEquals(
+                StepInterruptionRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("stepInterruptions")
                         .getReturnType());
     }
 
