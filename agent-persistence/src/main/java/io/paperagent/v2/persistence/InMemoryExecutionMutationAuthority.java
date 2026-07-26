@@ -45,6 +45,12 @@ final class InMemoryExecutionMutationAuthority {
                 state.stepActivations.get(planId);
         Map<EventId, InMemoryState.StepCompletionMarker> completionMarkers =
                 state.stepCompletions.get(planId);
+        Map<EventId, InMemoryState.StepPauseMarker> pauseMarkers =
+                state.stepPauses.get(planId);
+        Map<EventId, InMemoryState.StepFailMarker> failureMarkers =
+                state.stepFailures.get(planId);
+        Map<EventId, InMemoryState.StepCancelMarker> cancellationMarkers =
+                state.stepCancellations.get(planId);
         NavigableMap<Long, EventEnvelope> stream =
                 state.eventStreams.get(planId);
         if (plan == null
@@ -56,6 +62,9 @@ final class InMemoryExecutionMutationAuthority {
                 || links == null
                 || activationMarkers == null
                 || completionMarkers == null
+                || pauseMarkers == null
+                || failureMarkers == null
+                || cancellationMarkers == null
                 || stream == null
                 || stream.isEmpty()) {
             return null;
@@ -79,6 +88,9 @@ final class InMemoryExecutionMutationAuthority {
                         links,
                         activationMarkers,
                         completionMarkers,
+                        pauseMarkers,
+                        failureMarkers,
+                        cancellationMarkers,
                         stream)) {
             return null;
         }
@@ -109,6 +121,27 @@ final class InMemoryExecutionMutationAuthority {
                     return null;
                 }
                 tipCheckpoint = tipMarker.result().completedCheckpoint();
+            } else if ("STEP_PAUSE".equals(operationType)) {
+                InMemoryState.StepPauseMarker tipMarker =
+                        pauseMarkers.get(tip.markerIdentity().eventId());
+                if (tipMarker == null) {
+                    return null;
+                }
+                tipCheckpoint = tipMarker.result().interruptedCheckpoint();
+            } else if ("STEP_FAIL".equals(operationType)) {
+                InMemoryState.StepFailMarker tipMarker =
+                        failureMarkers.get(tip.markerIdentity().eventId());
+                if (tipMarker == null) {
+                    return null;
+                }
+                tipCheckpoint = tipMarker.result().interruptedCheckpoint();
+            } else if ("STEP_CANCEL".equals(operationType)) {
+                InMemoryState.StepCancelMarker tipMarker =
+                        cancellationMarkers.get(tip.markerIdentity().eventId());
+                if (tipMarker == null) {
+                    return null;
+                }
+                tipCheckpoint = tipMarker.result().interruptedCheckpoint();
             } else {
                 return null;
             }
@@ -323,13 +356,24 @@ final class InMemoryExecutionMutationAuthority {
             List<InMemoryState.ExecutionMutationLink> links,
             Map<EventId, InMemoryState.StepActivationMarker> activationMarkers,
             Map<EventId, InMemoryState.StepCompletionMarker> completionMarkers,
+            Map<EventId, InMemoryState.StepPauseMarker> pauseMarkers,
+            Map<EventId, InMemoryState.StepFailMarker> failureMarkers,
+            Map<EventId, InMemoryState.StepCancelMarker> cancellationMarkers,
             NavigableMap<Long, EventEnvelope> stream) {
-        if (links.size() != activationMarkers.size() + completionMarkers.size()) {
+        int markerCount = activationMarkers.size()
+                + completionMarkers.size()
+                + pauseMarkers.size()
+                + failureMarkers.size()
+                + cancellationMarkers.size();
+        if (links.size() != markerCount) {
             return false;
         }
         Set<EventId> markerIds = new HashSet<>(activationMarkers.keySet());
         markerIds.addAll(completionMarkers.keySet());
-        if (markerIds.size() != activationMarkers.size() + completionMarkers.size()) {
+        markerIds.addAll(pauseMarkers.keySet());
+        markerIds.addAll(failureMarkers.keySet());
+        markerIds.addAll(cancellationMarkers.keySet());
+        if (markerIds.size() != markerCount) {
             return false;
         }
         InMemoryState.ExecutionMutationHead previous = root;
@@ -361,6 +405,27 @@ final class InMemoryExecutionMutationAuthority {
                     return false;
                 }
                 event = marker.result().completionEvent();
+            } else if ("STEP_PAUSE".equals(operationType)) {
+                InMemoryState.StepPauseMarker marker =
+                        pauseMarkers.get(link.markerIdentity().eventId());
+                if (!isPauseMarkerBackedLink(planId, marker, link)) {
+                    return false;
+                }
+                event = marker.result().interruptionEvent();
+            } else if ("STEP_FAIL".equals(operationType)) {
+                InMemoryState.StepFailMarker marker =
+                        failureMarkers.get(link.markerIdentity().eventId());
+                if (!isFailMarkerBackedLink(planId, marker, link)) {
+                    return false;
+                }
+                event = marker.result().interruptionEvent();
+            } else if ("STEP_CANCEL".equals(operationType)) {
+                InMemoryState.StepCancelMarker marker =
+                        cancellationMarkers.get(link.markerIdentity().eventId());
+                if (!isCancelMarkerBackedLink(planId, marker, link)) {
+                    return false;
+                }
+                event = marker.result().interruptionEvent();
             } else {
                 return false;
             }
@@ -423,6 +488,171 @@ final class InMemoryExecutionMutationAuthority {
                         == request.activationEvent().sequence()
                 && resultHead.mutationEventId().equals(
                         request.activationEvent().id());
+    }
+
+    private static boolean isPauseMarkerBackedLink(
+            PlanId planId,
+            InMemoryState.StepPauseMarker marker,
+            InMemoryState.ExecutionMutationLink link) {
+        return marker != null && isInterruptionMarkerBackedLink(
+                planId,
+                StepInterruptionKind.PAUSE,
+                marker.request(),
+                marker.result(),
+                marker.provenanceLink(),
+                link);
+    }
+
+    private static boolean isFailMarkerBackedLink(
+            PlanId planId,
+            InMemoryState.StepFailMarker marker,
+            InMemoryState.ExecutionMutationLink link) {
+        return marker != null && isInterruptionMarkerBackedLink(
+                planId,
+                StepInterruptionKind.FAIL,
+                marker.request(),
+                marker.result(),
+                marker.provenanceLink(),
+                link);
+    }
+
+    private static boolean isCancelMarkerBackedLink(
+            PlanId planId,
+            InMemoryState.StepCancelMarker marker,
+            InMemoryState.ExecutionMutationLink link) {
+        return marker != null && isInterruptionMarkerBackedLink(
+                planId,
+                StepInterruptionKind.CANCEL,
+                marker.request(),
+                marker.result(),
+                marker.provenanceLink(),
+                link);
+    }
+
+    private static boolean isInterruptionMarkerBackedLink(
+            PlanId planId,
+            StepInterruptionKind kind,
+            Object request,
+            PersistedStepInterruption result,
+            InMemoryState.ExecutionMutationLink provenanceLink,
+            InMemoryState.ExecutionMutationLink link) {
+        InterruptionData data = interruptionData(kind, request, result);
+        if (data == null
+                || provenanceLink == null
+                || !provenanceLink.equals(link)
+                || !isCompleteLink(link)) {
+            return false;
+        }
+        InMemoryState.ExecutionMutationHead previous = link.previousHead();
+        InMemoryState.ExecutionMutationHead resultHead = link.resultHead();
+        VersionedCheckpoint persisted = result.interruptedCheckpoint();
+        return data.planId().equals(planId)
+                && result.planId().equals(planId)
+                && result.kind() == kind
+                && data.stepId().equals(result.stepId())
+                && data.fencingToken() == result.fencingToken()
+                && data.event().equals(result.interruptionEvent())
+                && data.expectedRevisionId().equals(previous.revisionId())
+                && data.expectedRevisionNumber() == previous.revisionNumber()
+                && data.expectedCheckpointVersion()
+                        == previous.checkpointVersion()
+                && data.expectedEventHeadSequence()
+                        == previous.eventHeadSequence()
+                && persisted.version() == data.expectedCheckpointVersion() + 1
+                && persisted.checkpoint().equals(data.checkpoint())
+                && data.checkpoint().revisionId().equals(previous.revisionId())
+                && data.checkpoint().revisionNumber() == previous.revisionNumber()
+                && data.checkpoint().lastEventSequence()
+                        == data.event().sequence()
+                && data.checkpoint().planState() == interruptionPlanState(kind)
+                && data.checkpoint().stepStates().get(data.stepId())
+                        == interruptionStepState(kind)
+                && link.markerIdentity().equals(
+                        interruptionMarkerIdentity(kind, data.event().id()))
+                && resultHead.revisionId().equals(previous.revisionId())
+                && resultHead.revisionNumber() == previous.revisionNumber()
+                && resultHead.checkpointVersion() == persisted.version()
+                && resultHead.eventHeadSequence() == data.event().sequence()
+                && resultHead.mutationEventId().equals(data.event().id());
+    }
+
+    private static InterruptionData interruptionData(
+            StepInterruptionKind kind,
+            Object request,
+            PersistedStepInterruption result) {
+        if (result == null || result.kind() != kind) {
+            return null;
+        }
+        return switch (kind) {
+            case PAUSE -> request instanceof StepPauseRequest pause
+                    ? new InterruptionData(
+                            pause.planId(),
+                            pause.stepId(),
+                            pause.fencingToken(),
+                            pause.expectedRevisionId(),
+                            pause.expectedRevisionNumber(),
+                            pause.expectedCheckpointVersion(),
+                            pause.expectedEventHeadSequence(),
+                            pause.pauseEvent(),
+                            pause.pausedCheckpoint())
+                    : null;
+            case FAIL -> request instanceof StepFailRequest failure
+                    ? new InterruptionData(
+                            failure.planId(),
+                            failure.stepId(),
+                            failure.fencingToken(),
+                            failure.expectedRevisionId(),
+                            failure.expectedRevisionNumber(),
+                            failure.expectedCheckpointVersion(),
+                            failure.expectedEventHeadSequence(),
+                            failure.failureEvent(),
+                            failure.failedCheckpoint())
+                    : null;
+            case CANCEL -> request instanceof StepCancelRequest cancellation
+                    ? new InterruptionData(
+                            cancellation.planId(),
+                            cancellation.stepId(),
+                            cancellation.fencingToken(),
+                            cancellation.expectedRevisionId(),
+                            cancellation.expectedRevisionNumber(),
+                            cancellation.expectedCheckpointVersion(),
+                            cancellation.expectedEventHeadSequence(),
+                            cancellation.cancellationEvent(),
+                            cancellation.cancelledCheckpoint())
+                    : null;
+        };
+    }
+
+    private static InMemoryState.ExecutionMutationMarkerIdentity
+            interruptionMarkerIdentity(
+                    StepInterruptionKind kind,
+                    EventId eventId) {
+        return switch (kind) {
+            case PAUSE -> InMemoryState.ExecutionMutationMarkerIdentity
+                    .stepPause(eventId);
+            case FAIL -> InMemoryState.ExecutionMutationMarkerIdentity
+                    .stepFail(eventId);
+            case CANCEL -> InMemoryState.ExecutionMutationMarkerIdentity
+                    .stepCancel(eventId);
+        };
+    }
+
+    private static StepExecutionState interruptionStepState(
+            StepInterruptionKind kind) {
+        return switch (kind) {
+            case PAUSE -> StepExecutionState.PAUSED;
+            case FAIL -> StepExecutionState.FAILED;
+            case CANCEL -> StepExecutionState.CANCELLED;
+        };
+    }
+
+    private static PlanExecutionState interruptionPlanState(
+            StepInterruptionKind kind) {
+        return switch (kind) {
+            case PAUSE -> PlanExecutionState.PAUSED;
+            case FAIL -> PlanExecutionState.FAILED;
+            case CANCEL -> PlanExecutionState.CANCELLED;
+        };
     }
 
     private static boolean isCompleteLink(
@@ -493,6 +723,60 @@ final class InMemoryExecutionMutationAuthority {
                         marker.request().completionEvent().id())
                 && isCompletionMarkerBackedLink(
                         planId, null, marker, marker.provenanceLink());
+    }
+
+    static boolean isSelfConsistentPauseMarker(
+            PlanId planId,
+            EventId markerKey,
+            InMemoryState.StepPauseMarker marker) {
+        return isSelfConsistentInterruptionMarker(
+                planId,
+                markerKey,
+                StepInterruptionKind.PAUSE,
+                marker == null ? null : marker.request(),
+                marker == null ? null : marker.result(),
+                marker == null ? null : marker.provenanceLink());
+    }
+
+    static boolean isSelfConsistentFailMarker(
+            PlanId planId,
+            EventId markerKey,
+            InMemoryState.StepFailMarker marker) {
+        return isSelfConsistentInterruptionMarker(
+                planId,
+                markerKey,
+                StepInterruptionKind.FAIL,
+                marker == null ? null : marker.request(),
+                marker == null ? null : marker.result(),
+                marker == null ? null : marker.provenanceLink());
+    }
+
+    static boolean isSelfConsistentCancelMarker(
+            PlanId planId,
+            EventId markerKey,
+            InMemoryState.StepCancelMarker marker) {
+        return isSelfConsistentInterruptionMarker(
+                planId,
+                markerKey,
+                StepInterruptionKind.CANCEL,
+                marker == null ? null : marker.request(),
+                marker == null ? null : marker.result(),
+                marker == null ? null : marker.provenanceLink());
+    }
+
+    private static boolean isSelfConsistentInterruptionMarker(
+            PlanId planId,
+            EventId markerKey,
+            StepInterruptionKind kind,
+            Object request,
+            PersistedStepInterruption result,
+            InMemoryState.ExecutionMutationLink link) {
+        return markerKey != null
+                && link != null
+                && link.markerIdentity() != null
+                && markerKey.equals(link.markerIdentity().eventId())
+                && isInterruptionMarkerBackedLink(
+                        planId, kind, request, result, link, link);
     }
 
     private static boolean isCompletionMarkerBackedLink(
@@ -642,6 +926,9 @@ final class InMemoryExecutionMutationAuthority {
                 || state.executionMutationLinks.containsKey(planId)
                 || state.stepActivations.containsKey(planId)
                 || state.stepCompletions.containsKey(planId)
+                || state.stepPauses.containsKey(planId)
+                || state.stepFailures.containsKey(planId)
+                || state.stepCancellations.containsKey(planId)
                 || state.planExecutionContextReservations.containsKey(planId)
                 || state.planExecutionContextConfirmations.containsKey(planId)
                 || InMemoryPlanExecutionContextAuthority
@@ -716,6 +1003,18 @@ final class InMemoryExecutionMutationAuthority {
                     + "links=<provided>, "
                     + "activationMarkers=<provided>]";
         }
+    }
+
+    private record InterruptionData(
+            PlanId planId,
+            PlanStepId stepId,
+            long fencingToken,
+            io.paperagent.v2.contracts.PlanRevisionId expectedRevisionId,
+            long expectedRevisionNumber,
+            long expectedCheckpointVersion,
+            long expectedEventHeadSequence,
+            EventEnvelope event,
+            Checkpoint checkpoint) {
     }
 
     record PlanRoot(

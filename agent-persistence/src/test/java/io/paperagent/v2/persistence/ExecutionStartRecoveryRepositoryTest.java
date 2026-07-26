@@ -442,6 +442,45 @@ class ExecutionStartRecoveryRepositoryTest {
     }
 
     @Test
+    void validActivationCompletionActivationInterruptionChainIsAdvanced() {
+        Harness harness = bootstrappedHarness();
+        PersistedExecutionStart started = start(harness, TOKEN, "start-interruption-chain");
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(harness.state()),
+                PersistenceFixtures.plan(),
+                TOKEN,
+                started.fencingToken(),
+                PersistenceFixtures.workspaceSpec("recovery-interruption-chain"));
+        requireApplied(harness.activations().activate(
+                PersistenceFixtures.stepActivationRequest(
+                        PersistenceFixtures.plan(),
+                        TOKEN,
+                        started.fencingToken(),
+                        "activation-before-interruption-chain")));
+        requireApplied(harness.completions().complete(
+                completionRequest(harness, "completion-before-interruption-chain")));
+        Plan completed = harness.state().plans.get(PersistenceFixtures.PLAN_ID);
+        requireApplied(harness.activations().activate(
+                PersistenceFixtures.stepActivationRequest(
+                        completed,
+                        harness.state().checkpoints
+                                .get(PersistenceFixtures.PLAN_ID)
+                                .checkpoint(),
+                        4,
+                        4,
+                        TOKEN,
+                        started.fencingToken(),
+                        PersistenceFixtures.STEP_2,
+                        "activation-before-pause-chain",
+                        5)));
+        requireApplied(harness.interruptions().pause(
+                pauseRequest(harness, "pause-recovery-chain")));
+
+        assertAdvanced(harness.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+    }
+
+    @Test
     void committedRecoveryAcceptsNoneReservedAndConfirmedContext() {
         Harness none = bootstrappedHarness();
         start(none, TOKEN, "start-context-none");
@@ -1182,6 +1221,44 @@ class ExecutionStartRecoveryRepositoryTest {
                 completedCheckpoint);
     }
 
+    private static StepPauseRequest pauseRequest(
+            Harness harness,
+            String eventId) {
+        Plan plan = harness.state().plans.get(PersistenceFixtures.PLAN_ID);
+        VersionedCheckpoint source = harness.state().checkpoints
+                .get(PersistenceFixtures.PLAN_ID);
+        Checkpoint current = source.checkpoint();
+        long eventSequence = current.lastEventSequence() + 1;
+        Map<io.paperagent.v2.contracts.PlanStepId, StepExecutionState> states =
+                new LinkedHashMap<>(current.stepStates());
+        states.put(PersistenceFixtures.STEP_2, StepExecutionState.PAUSED);
+        Checkpoint paused = new Checkpoint(
+                current.taskFrameId(),
+                current.planId(),
+                current.revisionId(),
+                current.revisionNumber(),
+                eventSequence,
+                PlanExecutionState.PAUSED,
+                states,
+                current.receiptReferences(),
+                current.createdAt().plusSeconds(1));
+        return new StepPauseRequest(
+                plan.id(),
+                TOKEN,
+                1,
+                plan.latestRevision().id(),
+                plan.latestRevision().number(),
+                source.version(),
+                current.lastEventSequence(),
+                PersistenceFixtures.STEP_2,
+                PersistenceFixtures.event(
+                        eventId,
+                        plan.taskFrameId(),
+                        plan.id(),
+                        eventSequence),
+                paused);
+    }
+
     private static PersistedExecutionStart start(
             Harness harness,
             String leaseToken,
@@ -1246,6 +1323,7 @@ class ExecutionStartRecoveryRepositoryTest {
                 new InMemoryExecutionStartRepository(state),
                 new InMemoryStepActivationRepository(state),
                 new InMemoryStepCompletionRepository(state),
+                new InMemoryStepInterruptionRepository(state),
                 new InMemoryExecutionStartRecoveryRepository(state));
     }
 
@@ -1298,6 +1376,7 @@ class ExecutionStartRecoveryRepositoryTest {
             ExecutionStartRepository executionStarts,
             StepActivationRepository activations,
             StepCompletionRepository completions,
+            StepInterruptionRepository interruptions,
             ExecutionStartRecoveryRepository recovery) {
     }
 }

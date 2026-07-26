@@ -140,7 +140,10 @@ final class InMemoryPlanExecutionContextAuthority {
                 && !state.executionMutationHeads.containsKey(planId)
                 && !state.executionMutationLinks.containsKey(planId)
                 && !state.stepActivations.containsKey(planId)
-                && !state.stepCompletions.containsKey(planId);
+                && !state.stepCompletions.containsKey(planId)
+                && !state.stepPauses.containsKey(planId)
+                && !state.stepFailures.containsKey(planId)
+                && !state.stepCancellations.containsKey(planId);
     }
 
     static boolean hasValidGlobalIndex(InMemoryState state) {
