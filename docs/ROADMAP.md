@@ -53,17 +53,19 @@
 - Plan execution context Persistence authority 与 Runtime composition。
 - committed-H0 Step activation candidate materialization。
 - Runtime Step activation composition（PR #77，Issue #76）。
+- provider-neutral effect identity/replayability 与 durable intent（PR #81，Issue #80）。
 
 当前安全停止点：
 
-- PR #77 已合并，Issue #76 已关闭；Runtime Step activation composition 已完成。
-  `d7e646f08cf8bb37985c2ff1fbd0ba7564416dff` 仅是本次文档刷新 Issue 的 base。本文档 PR 合并后，
-  必须以其 GitHub merge commit 作为 provider-neutral effect identity/replayability 与 durable intent
-  Issue 的唯一 `baseCommit`；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+- PR #81 已合并，Issue #80 已关闭；provider-neutral effect identity/replayability 与 durable intent
+  已完成。其证据为 12 个定向 tests、`agent-contracts` 85 tests、`agent-persistence` 191 tests，均为
+  0 failures、0 errors，且两个 fixed-head CI check 成功。
+  `1ec4369c4d12302774f85291f3de9083110a7970` 仅是本次文档刷新 Issue 的 base。本文档 PR 合并后，
+  必须以其 GitHub merge commit 作为 fenced effect result/progress 与 Receipt ownership Issue 的唯一
+  `baseCommit`；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍待按依赖顺序完成：
 
-- provider-neutral effect identity/replayability 与 durable intent。
 - fenced effect result/progress 和 Receipt ownership。
 - completion/revision、pause/fail/cancel、fenced replan。
 - 原子 Step Recovery inspection 与 Runtime Step Recovery composition。
