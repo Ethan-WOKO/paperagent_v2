@@ -38,6 +38,7 @@ class PublicBoundaryTest {
                 StepActivationRepository.class,
                 StepCompletionRepository.class,
                 StepInterruptionRepository.class,
+                PlanReplanRepository.class,
                 IdempotencyRepository.class);
 
         for (Class<?> port : ports) {
@@ -73,6 +74,7 @@ class PublicBoundaryTest {
                 InMemoryStepActivationRepository.class,
                 InMemoryStepCompletionRepository.class,
                 InMemoryStepInterruptionRepository.class,
+                InMemoryPlanReplanRepository.class,
                 InMemoryIdempotencyRepository.class,
                 InMemoryState.class);
         implementations.forEach(type -> assertFalse(Modifier.isPublic(type.getModifiers())));
@@ -536,6 +538,78 @@ class PublicBoundaryTest {
                 StepInterruptionRepository.class,
                 InMemoryPersistence.class
                         .getDeclaredMethod("stepInterruptions")
+                        .getReturnType());
+    }
+
+    @Test
+    void planReplanSurfaceIsExactAndTokenFreeInResult()
+            throws Exception {
+        assertTrue(PlanReplanRepository.class.isInterface());
+        assertEquals(1, PlanReplanRepository.class.getDeclaredMethods().length);
+        assertMethod(
+                PlanReplanRepository.class.getDeclaredMethod(
+                        "replan", PlanReplanRequest.class),
+                PersistenceResult.class,
+                PlanReplanRequest.class);
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseToken",
+                        "fencingToken",
+                        "expectedRevisionId",
+                        "expectedRevisionNumber",
+                        "expectedCheckpointVersion",
+                        "expectedEventHeadSequence",
+                        "replanEvent",
+                        "replannedRevision",
+                        "replannedCheckpoint"),
+                Arrays.stream(PlanReplanRequest.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        io.paperagent.v2.contracts.PlanRevisionId.class,
+                        long.class,
+                        long.class,
+                        long.class,
+                        EventEnvelope.class,
+                        io.paperagent.v2.contracts.PlanRevision.class,
+                        io.paperagent.v2.contracts.Checkpoint.class),
+                Arrays.stream(PlanReplanRequest.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertEquals(
+                List.of(
+                        "planId",
+                        "leaseOwnerId",
+                        "fencingToken",
+                        "replanEvent",
+                        "replannedRevision",
+                        "replannedCheckpoint"),
+                Arrays.stream(PersistedPlanReplan.class.getRecordComponents())
+                        .map(component -> component.getName())
+                        .toList());
+        assertEquals(
+                List.of(
+                        PlanId.class,
+                        String.class,
+                        long.class,
+                        EventEnvelope.class,
+                        io.paperagent.v2.contracts.PlanRevision.class,
+                        VersionedCheckpoint.class),
+                Arrays.stream(PersistedPlanReplan.class.getRecordComponents())
+                        .map(component -> component.getType())
+                        .toList());
+        assertTrue(Arrays.stream(PersistedPlanReplan.class.getRecordComponents())
+                .noneMatch(component -> component.getName().equals("leaseToken")
+                        || component.getType() == PlanReplanRequest.class));
+        assertEquals(
+                PlanReplanRepository.class,
+                InMemoryPersistence.class
+                        .getDeclaredMethod("planReplans")
                         .getReturnType());
     }
 

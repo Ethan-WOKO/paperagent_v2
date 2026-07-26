@@ -50,6 +50,8 @@ final class InMemoryState {
             new LinkedHashMap<>();
     final Map<PlanId, Map<EventId, StepCancelMarker>> stepCancellations =
             new LinkedHashMap<>();
+    final Map<PlanId, Map<EventId, PlanReplanMarker>> planReplans =
+            new LinkedHashMap<>();
     final Map<ToolCallId, EffectIntentMarker> effectIntents =
             new LinkedHashMap<>();
     final Map<ToolCallId, NavigableMap<Long, EffectProgressMarker>>
@@ -144,6 +146,10 @@ final class InMemoryState {
             return new ExecutionMutationMarkerIdentity("STEP_CANCEL", eventId);
         }
 
+        static ExecutionMutationMarkerIdentity planReplan(EventId eventId) {
+            return new ExecutionMutationMarkerIdentity("PLAN_REPLAN", eventId);
+        }
+
         @Override
         public String toString() {
             return "ExecutionMutationMarkerIdentity["
@@ -223,6 +229,18 @@ final class InMemoryState {
         @Override
         public String toString() {
             return "StepCancelMarker[request=<provided>, result=<provided>, "
+                    + "provenanceLink=<provided>]";
+        }
+    }
+
+    record PlanReplanMarker(
+            PlanReplanRequest request,
+            PersistedPlanReplan result,
+            ExecutionMutationLink provenanceLink) {
+
+        @Override
+        public String toString() {
+            return "PlanReplanMarker[request=<provided>, result=<provided>, "
                     + "provenanceLink=<provided>]";
         }
     }

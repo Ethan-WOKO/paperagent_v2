@@ -425,6 +425,61 @@ class ExecutionStartRecoveryRepositoryTest {
     }
 
     @Test
+    void validFencedReplanProgressIsAdvanced() {
+        Harness harness = bootstrappedHarness();
+        PersistedExecutionStart started = start(harness, TOKEN, "start-replan-chain");
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(harness.state()),
+                PersistenceFixtures.plan(),
+                TOKEN,
+                started.fencingToken(),
+                PersistenceFixtures.workspaceSpec("recovery-replan-chain"));
+        Plan source = harness.state().plans.get(PersistenceFixtures.PLAN_ID);
+        Checkpoint current = harness.state().checkpoints
+                .get(PersistenceFixtures.PLAN_ID).checkpoint();
+        PlanRevision replanned = new PlanRevision(
+                new PlanRevisionId("revision-recovery-replan"),
+                source.taskFrameId(),
+                2,
+                Optional.of(source.latestRevision().id()),
+                "recovery inspection replan",
+                current.createdAt().plusSeconds(1),
+                source.latestRevision().steps(),
+                source.latestRevision().completedFacts());
+        Checkpoint replannedCheckpoint = new Checkpoint(
+                source.taskFrameId(),
+                source.id(),
+                replanned.id(),
+                replanned.number(),
+                2,
+                PlanExecutionState.ACTIVE,
+                Map.of(
+                        PersistenceFixtures.STEP_1, StepExecutionState.NOT_STARTED,
+                        PersistenceFixtures.STEP_2, StepExecutionState.NOT_STARTED),
+                current.receiptReferences(),
+                current.createdAt().plusSeconds(1));
+        requireApplied(new InMemoryPlanReplanRepository(harness.state()).replan(
+                new PlanReplanRequest(
+                        source.id(),
+                        TOKEN,
+                        started.fencingToken(),
+                        source.latestRevision().id(),
+                        source.latestRevision().number(),
+                        2,
+                        1,
+                        PersistenceFixtures.event(
+                                "replan-recovery-chain",
+                                source.taskFrameId(),
+                                source.id(),
+                                2),
+                        replanned,
+                        replannedCheckpoint)));
+
+        assertAdvanced(harness.recovery()
+                .inspect(PersistenceFixtures.PLAN_ID));
+    }
+
+    @Test
     void validActivationCompletionActivationChainIsAdvanced() {
         Harness harness = bootstrappedHarness();
         PersistedExecutionStart started = start(harness, TOKEN, "start-completion-chain");
