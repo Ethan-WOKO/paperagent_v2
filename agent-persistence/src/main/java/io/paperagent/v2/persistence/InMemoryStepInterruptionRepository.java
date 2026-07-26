@@ -105,8 +105,13 @@ final class InMemoryStepInterruptionRepository
             MarkerLookup existing = findMarker(
                     candidate.planId(), candidate.event().id());
             if (existing != null) {
-                if (!isSelfConsistent(
-                        candidate.planId(), candidate.event().id(), existing)) {
+                if (!InMemoryExecutionMutationAuthority
+                        .hasValidInterruptionReplayProvenance(
+                                state,
+                                candidate.planId(),
+                                candidate.event().id(),
+                                existing.kind(),
+                                existing.marker())) {
                     return partialState();
                 }
                 return existing.request().equals(candidate.originalRequest())
@@ -278,26 +283,6 @@ final class InMemoryStepInterruptionRepository
                     marker,
                     false));
         }
-    }
-
-    private static boolean isSelfConsistent(
-            PlanId planId,
-            EventId eventId,
-            MarkerLookup marker) {
-        if (marker.duplicate()) {
-            return false;
-        }
-        return switch (marker.kind()) {
-            case PAUSE -> marker.marker() instanceof InMemoryState.StepPauseMarker pause
-                    && InMemoryExecutionMutationAuthority.isSelfConsistentPauseMarker(
-                            planId, eventId, pause);
-            case FAIL -> marker.marker() instanceof InMemoryState.StepFailMarker failure
-                    && InMemoryExecutionMutationAuthority.isSelfConsistentFailMarker(
-                            planId, eventId, failure);
-            case CANCEL -> marker.marker() instanceof InMemoryState.StepCancelMarker cancellation
-                    && InMemoryExecutionMutationAuthority.isSelfConsistentCancelMarker(
-                            planId, eventId, cancellation);
-        };
     }
 
     private PersistenceResult<PersistedStepInterruption> validateLiveLease(
