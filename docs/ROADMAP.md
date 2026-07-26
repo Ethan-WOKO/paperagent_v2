@@ -52,19 +52,19 @@
 - Workspace materialization specification、verified materialization 与执行 mutation authority。
 - Plan execution context Persistence authority 与 Runtime composition。
 - committed-H0 Step activation candidate materialization。
+- Runtime Step activation composition（PR #77，Issue #76）。
 
 当前安全停止点：
 
-- PR #72 已合并，Issue #70 已关闭；本次交接刷新前 `main`/`origin/main` 的已核对 baseline
-  为 `958d2e1af58d3d6816f136f75e529a0d53357554`。PR #75 合并后，必须以其 GitHub merge
-  commit 作为下一实现 Issue 的唯一 `baseCommit`，再发布并冻结 Runtime Step activation
-  composition Issue；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
+- PR #77 已合并，Issue #76 已关闭；Runtime Step activation composition 已完成。
+  `d7e646f08cf8bb37985c2ff1fbd0ba7564416dff` 仅是本次文档刷新 Issue 的 base。本文档 PR 合并后，
+  必须以其 GitHub merge commit 作为 provider-neutral effect identity/replayability 与 durable intent
+  Issue 的唯一 `baseCommit`；精确状态见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍待按依赖顺序完成：
 
-- Runtime Step activation composition。
-- provider-neutral effect identity/replayability、durable intent、fenced result/progress 和
-  Receipt ownership。
+- provider-neutral effect identity/replayability 与 durable intent。
+- fenced effect result/progress 和 Receipt ownership。
 - completion/revision、pause/fail/cancel、fenced replan。
 - 原子 Step Recovery inspection 与 Runtime Step Recovery composition。
 - 单轮 Step kernel、bounded Step Agent Loop、bounded repair/replan。
