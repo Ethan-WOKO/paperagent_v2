@@ -244,6 +244,26 @@ class ExecutionStartRecoveryRepositoryTest {
     }
 
     @Test
+    void executionStartedAfterPreStartRevisionRemainsStrictCommitted() {
+        Harness harness = bootstrappedHarness();
+        PlanRevision revision2 = PersistenceFixtures.revision2(
+                "revision-2", "pre-start revision");
+        Plan revised = requireApplied(harness.plans().appendRevision(
+                PersistenceFixtures.PLAN_ID, 1, revision2));
+
+        PersistedExecutionStart started = start(
+                harness, TOKEN, "start-pre-start-revision", revised);
+
+        PersistenceResult<ExecutionStartRecoverySnapshot> inspected =
+                harness.recovery().inspect(PersistenceFixtures.PLAN_ID);
+        assertEquals(PersistenceOutcome.FOUND, inspected.outcome());
+        PersistedExecutionStartCommitted committed =
+                (PersistedExecutionStartCommitted) inspected.value().orElseThrow();
+        assertEquals(revised, committed.currentPlan());
+        assertEquals(revision2.id(), started.startedCheckpoint().checkpoint().revisionId());
+    }
+
+    @Test
     void leaseReleaseAndFailingClockDoNotChangeCommitted() {
         PersistenceFixtures.MutableCountingClock clock =
                 new PersistenceFixtures.MutableCountingClock(PersistenceFixtures.T0);

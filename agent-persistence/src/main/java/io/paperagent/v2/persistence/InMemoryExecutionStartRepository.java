@@ -127,7 +127,7 @@ final class InMemoryExecutionStartRepository implements ExecutionStartRepository
                     request.startEvent(),
                     started);
             InMemoryState.ExecutionStartMarker committedMarker =
-                    new InMemoryState.ExecutionStartMarker(request, result);
+                    new InMemoryState.ExecutionStartMarker(request, result, plan);
             NavigableMap<Long, EventEnvelope> committedStream = new TreeMap<>();
             committedStream.put(1L, request.startEvent());
 

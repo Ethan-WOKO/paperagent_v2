@@ -419,7 +419,9 @@ final class InMemoryExecutionMutationAuthority {
                 || stream.isEmpty()) {
             return null;
         }
-        Plan plan = bootstrap.plan();
+        Plan plan = start.startPlan() == null
+                ? bootstrap.plan()
+                : start.startPlan();
         TaskFrame taskFrame = state.taskFrames.get(plan.taskFrameId());
         if (!hasCanonicalBootstrapRoot(planId, taskFrame, plan, bootstrap)
                 || !hasCanonicalStart(planId, taskFrame, plan, bootstrap, start)

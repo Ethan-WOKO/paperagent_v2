@@ -52,6 +52,26 @@ class StepInterruptionRepositoryTest {
     }
 
     @Test
+    void exactReplayAfterPreStartRevisionSurvivesPlanRemovalWithoutClockAccess() {
+        Harness harness = activeAfterPreStartRevision("replay-pre-start-revision");
+        StepPauseRequest request = pauseRequest(
+                harness, "pause-replay-pre-start-revision");
+        PersistedStepInterruption original = requireApplied(
+                harness.interruptions().pause(request));
+
+        harness.state().plans.remove(harness.plan().id());
+        int before = harness.clock().observationCount();
+        harness.clock().failOnObservation();
+
+        PersistenceResult<PersistedStepInterruption> replayed =
+                harness.interruptions().pause(request);
+
+        assertEquals(PersistenceOutcome.REPLAYED, replayed.outcome(), replayed.toString());
+        assertSame(original, replayed.value().orElseThrow());
+        assertEquals(before, harness.clock().observationCount());
+    }
+
+    @Test
     void changedAndCrossKindSameIdentityConflictWithoutClockAccess() {
         Harness harness = active("identity");
         StepPauseRequest pause = pauseRequest(harness, "shared-interruption-id");
@@ -232,6 +252,45 @@ class StepInterruptionRepositoryTest {
         requireApplied(new InMemoryStepActivationRepository(state).activate(
                 PersistenceFixtures.stepActivationRequest(
                         plan, TOKEN, lease.fencingToken(), "activation-" + suffix)));
+        return new Harness(
+                state,
+                clock,
+                plan,
+                leases,
+                new InMemoryStepInterruptionRepository(state));
+    }
+
+    private static Harness activeAfterPreStartRevision(String suffix) {
+        PersistenceFixtures.MutableCountingClock clock =
+                new PersistenceFixtures.MutableCountingClock(PersistenceFixtures.T0);
+        InMemoryState state = new InMemoryState(clock);
+        Plan initialPlan = PersistenceFixtures.plan();
+        requireApplied(new InMemoryPlanBootstrapRepository(state).bootstrap(
+                PersistenceFixtures.taskFrame(),
+                initialPlan,
+                PersistenceFixtures.initialCheckpoint(initialPlan)));
+        Plan plan = requireApplied(new InMemoryPlanRepository(state).appendRevision(
+                initialPlan.id(),
+                initialPlan.latestRevision().number(),
+                PersistenceFixtures.revision2(
+                        "revision-" + suffix, "pre-start revision")));
+        InMemoryLeaseRepository leases = new InMemoryLeaseRepository(state);
+        LeaseRecord lease = requireApplied(leases.acquire(
+                plan.id(), OWNER, TOKEN,
+                PersistenceFixtures.T0.plus(Duration.ofMinutes(1))));
+        requireApplied(new InMemoryExecutionStartRepository(state).start(
+                PersistenceFixtures.executionStartRequest(
+                        plan, TOKEN, lease.fencingToken(), "start-" + suffix)));
+        PersistenceFixtures.confirmExecutionContext(
+                new InMemoryPlanExecutionContextRepository(state),
+                plan,
+                TOKEN,
+                lease.fencingToken(),
+                PersistenceFixtures.workspaceSpec("interruption-" + suffix));
+        requireApplied(new InMemoryStepActivationRepository(state).activate(
+                PersistenceFixtures.stepActivationRequest(
+                        plan, TOKEN, lease.fencingToken(),
+                        "activation-" + suffix)));
         return new Harness(
                 state,
                 clock,

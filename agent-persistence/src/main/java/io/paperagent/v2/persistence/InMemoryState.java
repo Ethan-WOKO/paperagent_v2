@@ -84,11 +84,19 @@ final class InMemoryState {
 
     record ExecutionStartMarker(
             ExecutionStartRequest request,
-            PersistedExecutionStart result) {
+            PersistedExecutionStart result,
+            Plan startPlan) {
+
+        ExecutionStartMarker(
+                ExecutionStartRequest request,
+                PersistedExecutionStart result) {
+            this(request, result, null);
+        }
 
         @Override
         public String toString() {
-            return "ExecutionStartMarker[request=<provided>, result=<provided>]";
+            return "ExecutionStartMarker[request=<provided>, result=<provided>, "
+                    + "startPlan=<provided>]";
         }
     }
 
