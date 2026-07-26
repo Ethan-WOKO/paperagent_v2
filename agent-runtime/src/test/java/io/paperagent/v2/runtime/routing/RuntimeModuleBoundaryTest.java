@@ -74,6 +74,24 @@ class RuntimeModuleBoundaryTest {
                     "import io.paperagent.v2.persistence"
                             + ".PersistenceResult;");
     private static final Set<String>
+            ALLOWED_STEP_RECOVERY_COMPOSITION_PERSISTENCE_IMPORTS = Set.of(
+                    "import io.paperagent.v2.persistence.LeaseRecord;",
+                    "import io.paperagent.v2.persistence.LeaseRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistedStepRecoveryActive;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceErrorCode;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceFailure;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceOutcome;",
+                    "import io.paperagent.v2.persistence"
+                            + ".PersistenceResult;",
+                    "import io.paperagent.v2.persistence"
+                            + ".StepRecoveryRepository;",
+                    "import io.paperagent.v2.persistence"
+                            + ".StepRecoverySnapshot;");
+    private static final Set<String>
             ALLOWED_CONTEXT_COMPOSITION_PERSISTENCE_IMPORTS = Set.of(
                     "import io.paperagent.v2.persistence"
                             + ".ExecutionStartRecoveryRepository;",
@@ -308,6 +326,15 @@ class RuntimeModuleBoundaryTest {
                 "recovery",
                 "composition",
                 "Recoverer.java"));
+        Path stepRecoveryCompositionSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "recovery",
+                "composition",
+                "StepRecoverer.java"));
         Path contextCompositionSource = sourceRoot.resolve(Path.of(
                 "io",
                 "paperagent",
@@ -380,6 +407,11 @@ class RuntimeModuleBoundaryTest {
                         sourceRoot,
                         recoveryCompositionSource));
         assertEquals(
+                ALLOWED_STEP_RECOVERY_COMPOSITION_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(
+                        sourceRoot,
+                        stepRecoveryCompositionSource));
+        assertEquals(
                 ALLOWED_CONTEXT_COMPOSITION_PERSISTENCE_IMPORTS,
                 allowedPersistenceImports(
                         sourceRoot,
@@ -446,6 +478,13 @@ class RuntimeModuleBoundaryTest {
                 allowedPersistenceImports(
                         sourceRoot,
                         recoveryCompositionSource)
+                        .contains(
+                                "import io.paperagent.v2.persistence"
+                                        + ".InMemoryPersistence;"));
+        assertFalse(
+                allowedPersistenceImports(
+                        sourceRoot,
+                        stepRecoveryCompositionSource)
                         .contains(
                                 "import io.paperagent.v2.persistence"
                                         + ".InMemoryPersistence;"));
@@ -571,7 +610,42 @@ class RuntimeModuleBoundaryTest {
                 "runtime",
                 "execution",
                 "recovery",
-                "composition"));
+                "composition"))
+                && !isStepRecoveryCompositionSource(sourceRoot, sourcePath);
+    }
+
+    private static boolean isStepRecoveryCompositionSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        Path parent = relative.getParent();
+        if (parent == null || !parent.equals(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "recovery",
+                "composition"))) {
+            return false;
+        }
+        return Set.of(
+                "DefaultStepRecoverer.java",
+                "StepRecoverer.java",
+                "StepRecoveryLeaseAttempt.java",
+                "StepRecoveryRequest.java",
+                "StepRecoveryCompositionOutcome.java",
+                "RecoveredActiveStep.java",
+                "StepRecoveryLeaseRejected.java",
+                "StepRecoveryPersistenceRejected.java",
+                "StepRecoveryLeaseDisposition.java",
+                "StepRecoveryStage.java",
+                "StepRecoveryProtocolCode.java",
+                "StepRecoveryProtocolException.java",
+                "StepRecoveryValidationCode.java",
+                "StepRecoveryValidationException.java",
+                "StepRecoveryCompositionValues.java")
+                .contains(sourcePath.getFileName().toString());
     }
 
     private static boolean isContextCompositionSource(
@@ -632,6 +706,9 @@ class RuntimeModuleBoundaryTest {
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
+        if (isStepRecoveryCompositionSource(sourceRoot, sourcePath)) {
+            return ALLOWED_STEP_RECOVERY_COMPOSITION_PERSISTENCE_IMPORTS;
+        }
         if (isActivationCompositionSource(sourceRoot, sourcePath)) {
             return ALLOWED_ACTIVATION_COMPOSITION_PERSISTENCE_IMPORTS;
         }

@@ -48,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExecutionStartRecoveryBoundaryTest {
-    private static final Set<String> PRODUCTION_FILES = Set.of(
+    private static final Set<String> EXECUTION_START_PRODUCTION_FILES = Set.of(
             "DefaultExecutionStartRecoverer.java",
             "ExecutionStartRecoverer.java",
             "ExecutionStartRecoveryAdvancedUnsupported.java",
@@ -65,6 +65,25 @@ class ExecutionStartRecoveryBoundaryTest {
             "ExecutionStartRecoveryValidationException.java",
             "ExecutionStartRecoveryValues.java",
             "RecoveredExecutionStart.java");
+    private static final Set<String> STEP_RECOVERY_PRODUCTION_FILES = Set.of(
+            "DefaultStepRecoverer.java",
+            "RecoveredActiveStep.java",
+            "StepRecoverer.java",
+            "StepRecoveryCompositionOutcome.java",
+            "StepRecoveryCompositionValues.java",
+            "StepRecoveryLeaseAttempt.java",
+            "StepRecoveryLeaseDisposition.java",
+            "StepRecoveryLeaseRejected.java",
+            "StepRecoveryPersistenceRejected.java",
+            "StepRecoveryProtocolCode.java",
+            "StepRecoveryProtocolException.java",
+            "StepRecoveryRequest.java",
+            "StepRecoveryStage.java",
+            "StepRecoveryValidationCode.java",
+            "StepRecoveryValidationException.java");
+    private static final Set<String> PRODUCTION_FILES = union(
+            EXECUTION_START_PRODUCTION_FILES,
+            STEP_RECOVERY_PRODUCTION_FILES);
     private static final Set<String> CONTRACT_IMPORTS = Set.of(
             "import io.paperagent.v2.contracts.Checkpoint;",
             "import io.paperagent.v2.contracts.EventEnvelope;",
@@ -476,9 +495,10 @@ class ExecutionStartRecoveryBoundaryTest {
                 .collect(Collectors.toSet());
         assertEquals(PRODUCTION_FILES, files);
 
+        List<Path> executionStartSources = executionStartProductionJavaSources();
         Set<String> imports = new java.util.LinkedHashSet<>();
         StringBuilder allSource = new StringBuilder();
-        for (Path path : sources) {
+        for (Path path : executionStartSources) {
             String text = Files.readString(path);
             allSource.append(text).append('\n');
             for (String line : Files.readAllLines(path)) {
@@ -569,7 +589,7 @@ class ExecutionStartRecoveryBoundaryTest {
                                 + RECOVERER_SIMPLE_NAME + " {}"));
 
         int sourceImplementations = 0;
-        for (Path path : productionJavaSources()) {
+        for (Path path : executionStartProductionJavaSources()) {
             int inFile = implementationCount(Files.readString(path));
             if (inFile > 0) {
                 sourceImplementations += inFile;
@@ -999,6 +1019,20 @@ class ExecutionStartRecoveryBoundaryTest {
                     .filter(path -> path.toString().endsWith(".java"))
                     .toList();
         }
+    }
+
+    private static List<Path> executionStartProductionJavaSources()
+            throws java.io.IOException {
+        return productionJavaSources().stream()
+                .filter(path -> EXECUTION_START_PRODUCTION_FILES.contains(
+                        path.getFileName().toString()))
+                .toList();
+    }
+
+    private static Set<String> union(Set<String> first, Set<String> second) {
+        var values = new java.util.LinkedHashSet<>(first);
+        values.addAll(second);
+        return Set.copyOf(values);
     }
 
     private static Path moduleDirectory() {
