@@ -2,6 +2,7 @@ package io.paperagent.v2.persistence;
 
 import io.paperagent.v2.contracts.EventEnvelope;
 import io.paperagent.v2.contracts.EventId;
+import io.paperagent.v2.contracts.ToolCallId;
 import io.paperagent.v2.contracts.ExecutionReceipt;
 import io.paperagent.v2.contracts.Plan;
 import io.paperagent.v2.contracts.PlanId;
@@ -40,6 +41,8 @@ final class InMemoryState {
     final Map<PlanId, List<ExecutionMutationLink>> executionMutationLinks =
             new LinkedHashMap<>();
     final Map<PlanId, Map<EventId, StepActivationMarker>> stepActivations =
+            new LinkedHashMap<>();
+    final Map<ToolCallId, EffectIntentMarker> effectIntents =
             new LinkedHashMap<>();
     final Map<PlanId, PlanExecutionContextReservationMarker>
             planExecutionContextReservations = new LinkedHashMap<>();
@@ -136,6 +139,19 @@ final class InMemoryState {
                     + "request=<provided>, "
                     + "result=<provided>, "
                     + "provenanceLink=<provided>]";
+        }
+    }
+
+    record EffectIntentMarker(
+            EffectIntentRequest request,
+            PersistedEffectIntent result,
+            String leaseOwnerId) {
+
+        @Override
+        public String toString() {
+            return "EffectIntentMarker["
+                    + "request=<provided>, result=<provided>, "
+                    + "leaseOwnerId=<provided>]";
         }
     }
 
