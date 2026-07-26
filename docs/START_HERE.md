@@ -37,17 +37,22 @@ context 及其 Runtime composition、committed-H0 Step activation candidate mate
 Step activation composition（PR #77，Issue #76），以及 provider-neutral effect identity/replayability
 与 durable intent（PR #81，Issue #80）。PR #81 的定向 12 tests、`agent-contracts` 85 tests 和
 `agent-persistence` 191 tests 均为 0 failures、0 errors，两个 fixed-head CI check 均成功。
-最新合并的切片是 provider-neutral fenced effect progress/final result persistence 与 Receipt ownership
+此前完成的切片是 provider-neutral fenced effect progress/final result persistence 与 Receipt ownership
 （PR #85，Issue #84）。其 fixed head 是 `a96376771db3dbe8bc84aaa7ce6f4912a07b5b22`，GitHub merge
 commit 是 `c54ebf6487186c55592402da10669b93c2d89b9a`；12 个 focused tests、`agent-contracts` 88 tests 和
 `agent-persistence` 200 tests 均为 0 failures、0 errors，两个 fixed-head CI `verify` check 成功，且
 `git diff --check` 通过。
+最新合并的切片是 fenced Step completion 与 append-only revision（PR #89，Issue #88）。其 fixed head
+是 `d1e252475b255e74dd90c081853df6a8c7ff2bba`，GitHub merge commit 是当前 `main` 的
+`965cf025fcd5ecd7ca2e8630bff4bae532e26626`。审查修正将 completion marker 与 Plan revision 绑定，并在
+不一致时 fail-closed；22 个 focused tests、`agent-contracts` 88 tests 和 `agent-persistence` 214 tests 均为
+0 failures、0 errors，两个 fixed-head CI `verify` check 成功，且 `git diff --check` 通过。
 当前安全停止点、精确提交、Issue/PR 状态、测试证据和下一切片见
 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍未完成的关键产品能力：
 
-- completion/replan/recovery 主链。
+- pause/fail/cancel、replan/recovery 主链。
 - 单轮 Step kernel、bounded Step Agent Loop 和 bounded repair/replan。
 - 真实模型或执行后端、耐久数据库适配器和生产级隔离。
 - 产品 API、Web UI、用户接受/拒绝与新 ProjectVersion 闭环。
@@ -63,9 +68,9 @@ commit 是 `c54ebf6487186c55592402da10669b93c2d89b9a`；12 个 focused tests、`
    `main`/`origin/main`、已合并 PR、已关闭 Issue 和是否已有开放的后续实现 Issue；外部状态
    可能在文档写入后变化，不得猜测。
 2. 本次交接刷新 PR 合并后，运行 `git fetch origin`，记录该 PR 的 GitHub merge commit，并确认
-   本地 `main` 与 `origin/main` 都指向该提交。`c54ebf6487186c55592402da10669b93c2d89b9a` 仅是本次
+   本地 `main` 与 `origin/main` 都指向该提交。`965cf025fcd5ecd7ca2e8630bff4bae532e26626` 仅是本次
    文档刷新 Issue 的 base；该文档 PR 的新 merge commit 才是下一实现 Issue 的唯一 `baseCommit`。
-3. 以该 `baseCommit` 先发布并冻结 completion/revision Issue。该 Issue 不得跳到 pause/fail/cancel、
+3. 以该 `baseCommit` 先发布并冻结 pause/fail/cancel Issue。该 Issue 不得跳到 fenced replan、
    recovery 或 Agent Loop。
 4. 每个功能继续使用独立 Issue、worktree、`codex/` 分支和 Draft PR；不得越过
    `ACTIVE_DEVELOPMENT.md` 中的依赖顺序并行实现下游能力。
