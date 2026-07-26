@@ -34,25 +34,23 @@ V2 不继续修补旧 Runtime。它重新实现 Agent 核心，同时选择性�
 已完成并合并的 Wave 3 基础切片包括二元 Router、TaskFrame/Plan/Checkpoint 冻结、原子
 Persistence bootstrap、execution start/recovery、Workspace 物化与校验、Plan execution
 context 及其 Runtime composition、committed-H0 Step activation candidate materialization，以及 Runtime
-Step activation composition（PR #77，Issue #76），以及 provider-neutral effect identity/replayability
-与 durable intent（PR #81，Issue #80）。PR #81 的定向 12 tests、`agent-contracts` 85 tests 和
-`agent-persistence` 191 tests 均为 0 failures、0 errors，两个 fixed-head CI check 均成功。
-此前完成的切片是 provider-neutral fenced effect progress/final result persistence 与 Receipt ownership
-（PR #85，Issue #84）。其 fixed head 是 `a96376771db3dbe8bc84aaa7ce6f4912a07b5b22`，GitHub merge
-commit 是 `c54ebf6487186c55592402da10669b93c2d89b9a`；12 个 focused tests、`agent-contracts` 88 tests 和
-`agent-persistence` 200 tests 均为 0 failures、0 errors，两个 fixed-head CI `verify` check 成功，且
-`git diff --check` 通过。
-最新合并的切片是 fenced Step completion 与 append-only revision（PR #89，Issue #88）。其 fixed head
-是 `d1e252475b255e74dd90c081853df6a8c7ff2bba`，GitHub merge commit 是当前 `main` 的
-`965cf025fcd5ecd7ca2e8630bff4bae532e26626`。审查修正将 completion marker 与 Plan revision 绑定，并在
-不一致时 fail-closed；22 个 focused tests、`agent-contracts` 88 tests 和 `agent-persistence` 214 tests 均为
-0 failures、0 errors，两个 fixed-head CI `verify` check 成功，且 `git diff --check` 通过。
-当前安全停止点、精确提交、Issue/PR 状态、测试证据和下一切片见
-[当前开发状态](ACTIVE_DEVELOPMENT.md)。
+Step activation composition（PR #77，Issue #76）、provider-neutral effect identity/replayability 与
+durable intent（PR #81，Issue #80）、provider-neutral fenced effect progress/final result persistence
+与 Receipt ownership（PR #85，Issue #84）、fenced Step completion 与 append-only revision
+（PR #89，Issue #88），以及 fenced active-Step pause、fail、cancel facts（PR #93，Issue #92）。
+
+PR #93 的 final fixed head 是 `f794daf5be54b33138eb96fc0ac3846434c2bb1a`，GitHub merge commit 是
+当前 `main` 与 `origin/main` 的 `cf77d58399418bb8656ad2a517eb9f1f624e1104`。其修正保证
+marker-backed exact replay 先重建 durable provenance、损坏时 fail-closed；execution-start marker 冻结
+current Plan，使 pre-start revision recovery 与 Plan projection 移除后的 replay 仍可验证。
+验证为 25 个 focused tests、`agent-contracts` 88 tests、`agent-persistence` 231 tests 和定向
+`ExecutionStartRecoveryIntegrationTest` 4 tests，均为 0 failures、0 errors；`git diff --check`
+和两个最终 fixed-head CI `verify` check 均已通过。当前安全停止点、精确提交、Issue/PR 状态、
+测试证据和下一切片见 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍未完成的关键产品能力：
 
-- pause/fail/cancel、replan/recovery 主链。
+- fenced replan、Step Recovery 主链。
 - 单轮 Step kernel、bounded Step Agent Loop 和 bounded repair/replan。
 - 真实模型或执行后端、耐久数据库适配器和生产级隔离。
 - 产品 API、Web UI、用户接受/拒绝与新 ProjectVersion 闭环。
@@ -64,16 +62,19 @@ commit 是 `c54ebf6487186c55592402da10669b93c2d89b9a`；12 个 focused tests、`
 
 ## 下一步
 
-1. 读取 [当前开发状态](ACTIVE_DEVELOPMENT.md)，再用 Git/GitHub 核对记录的
-   `main`/`origin/main`、已合并 PR、已关闭 Issue 和是否已有开放的后续实现 Issue；外部状态
-   可能在文档写入后变化，不得猜测。
+1. 完整读取 `AGENTS.md`、本文件、`ARCHITECTURE.md`、`MIGRATION_MAP.md`、
+   `DEVELOPMENT_PROCESS.md`、`ROADMAP.md` 和 [当前开发状态](ACTIVE_DEVELOPMENT.md)，再用 Git/GitHub
+   核对记录的 `main`/`origin/main`、已合并 PR、已关闭 Issue 和是否已有开放的后续实现 Issue；
+   外部状态可能在文档写入后变化，不得猜测。
 2. 本次交接刷新 PR 合并后，运行 `git fetch origin`，记录该 PR 的 GitHub merge commit，并确认
-   本地 `main` 与 `origin/main` 都指向该提交。`965cf025fcd5ecd7ca2e8630bff4bae532e26626` 仅是本次
-   文档刷新 Issue 的 base；该文档 PR 的新 merge commit 才是下一实现 Issue 的唯一 `baseCommit`。
-3. 以该 `baseCommit` 先发布并冻结 pause/fail/cancel Issue。该 Issue 不得跳到 fenced replan、
-   recovery 或 Agent Loop。
-4. 每个功能继续使用独立 Issue、worktree、`codex/` 分支和 Draft PR；不得越过
-   `ACTIVE_DEVELOPMENT.md` 中的依赖顺序并行实现下游能力。
+   本地 `main` 与 `origin/main` 都指向该提交。该提交才是下一功能 fenced replan Issue 的唯一
+   `baseCommit`；不能复用 `cf77d58399418bb8656ad2a517eb9f1f624e1104`。
+3. 只以该 `baseCommit` 发布并冻结 fenced replan Issue，明确目标、非目标、owned paths、冻结契约、
+   依赖、验收、必跑检查、停止条件和合并顺序。文档 PR 不创建 worktree 或开始实现 replan。
+4. 只有 Issue 冻结后，实施子对话才使用独立 worktree、`codex/` 分支和 Draft PR；它负责实现、
+   测试、commit、push，主对话固定 head 审查、检查 CI 并决定合并。后续严格按 fenced replan、
+   atomic Step Recovery inspection、Runtime Step Recovery composition、single-turn Step kernel、
+   bounded Step Agent Loop、bounded repair/replan 的顺序推进。
 
 ## 新主对话建议指令
 
