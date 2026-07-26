@@ -8,35 +8,34 @@
 ## 安全停止点
 
 - Repository：`Ethan-WOKO/paperagent_v2`
-- 最后合并的 Runtime PR：[#77](https://github.com/Ethan-WOKO/paperagent_v2/pull/77)，对应
-  [Issue #76](https://github.com/Ethan-WOKO/paperagent_v2/issues/76) 已关闭；Runtime Step activation
-  composition 已完成。
-- Issue #78 追踪本次文档刷新；它不是 Runtime 实现工作流。provider-neutral effect
-  identity/replayability 与 durable intent 的实现 Issue 尚未发布。
-- `d7e646f08cf8bb37985c2ff1fbd0ba7564416dff` 仅是 Issue #78 的文档刷新 base，不是下一实现
+- 最新合并的 Wave 3 PR：[#81](https://github.com/Ethan-WOKO/paperagent_v2/pull/81)，对应
+  [Issue #80](https://github.com/Ethan-WOKO/paperagent_v2/issues/80) 已关闭；provider-neutral effect
+  identity/replayability 与 durable intent 已完成。
+- Issue #82 追踪本次文档刷新；它不是 Runtime 实现工作流。fenced effect result/progress 与
+  Receipt ownership 的实现 Issue 尚未发布。
+- `1ec4369c4d12302774f85291f3de9083110a7970` 仅是 Issue #82 的文档刷新 base，不是下一实现
   Issue 的 base。本次文档 PR 合并后，必须记录其 GitHub merge commit，并将该提交作为下一
-  provider-neutral effect identity/replayability 与 durable intent Issue 的唯一 `baseCommit`。
+  fenced effect result/progress 与 Receipt ownership Issue 的唯一 `baseCommit`。
 
 如果 GitHub 状态与本节不一致，以重新读取的 GitHub 状态为准，并先判断是谁、为什么改变，
 不得根据编号或本地旧分支猜测。
 
-## 已合并的 PR #77 能力
+## 已合并的 PR #81 能力
 
-PR #77 组合 committed-H0 Step activation candidate、lease/fence、current context 与 Persistence
-authority：
+PR #81 定义 provider-neutral、不可变的 `EffectIntent`，并由 Persistence authority 持久化 stable
+effect identity/replayability 与 durable intent：
 
-- 仅在 Persistence authority 承认时提交 activation，并保留 replay/stale rejection。
-- 不执行 Step effect，也不实现 effect result/progress、Receipt ownership、completion、recovery 或
-  Agent Loop。
+- 首次持久化只在已提交的 active Step activation 与当前 live lease/fence 获得承认时发生；相同
+  `ToolCallId` 的精确重放返回原有事实，冲突重放被拒绝。
+- 不执行 effect，不写 event、checkpoint、revision、Receipt、result 或 progress，也不实现
+  completion、recovery 或 Agent Loop。
 
 验证证据：
 
-- 定向行为/边界：20 tests，0 failures，0 errors，0 skips。
-- `agent-runtime` 聚合：304 tests，0 failures，0 errors，0 skips。
-- 全 Reactor：697 tests，0 failures，0 errors，10 skips。
-- 10 个 skip 均为既有 Windows 文件系统限制。
-- `git diff --check` 通过；最终 `mvn -T 1 clean` 后无 `target` 目录。
-- 无 `.env`、密钥、用户文件、V1 复制或生产 test-only Persistence 依赖。
+- 定向行为/边界：12 tests（3 个 `agent-contracts`、9 个 `agent-persistence`），0 failures，0 errors。
+- 受影响模块聚合：`agent-contracts` 85 tests、`agent-persistence` 191 tests，均为 0 failures、0 errors。
+- 两个 fixed-head CI check 均已成功。
+- 无 `.env`、密钥、用户文件、V1 复制或生产数据库适配器。
 
 ## 恢复后的第一动作
 
@@ -44,8 +43,8 @@ authority：
    实现 Issue。只有主对话可以决定 Ready 和合并，实施子对话不得合并。
 2. 本次文档 PR 合并后运行 `git fetch origin`，记录其 GitHub merge commit，并确认本地 `main` 与
    `origin/main` 都指向该提交；不得复用本 Issue 的 base
-   `d7e646f08cf8bb37985c2ff1fbd0ba7564416dff`。
-3. 检查是否已有开放的 provider-neutral effect identity/replayability 与 durable intent 实现 Issue；
+   `1ec4369c4d12302774f85291f3de9083110a7970`。
+3. 检查是否已有开放的 fenced effect result/progress 与 Receipt ownership 实现 Issue；
    若尚未发布，主对话以本次文档 PR 的 GitHub merge commit 为唯一 `baseCommit` 创建该 Issue，并冻结目标、非目标、
    owned paths、契约、依赖、验收、必跑检查、停止条件和合并顺序。
 4. 只有 Issue 冻结后，实施子对话才能从该 `baseCommit` 创建独立 worktree 和 `codex/` 分支，
@@ -53,22 +52,20 @@ authority：
 
 ## 下一能力与严格顺序
 
-下一实现 Issue 只能是 **provider-neutral effect identity/replayability 与 durable intent**。它必须先
-把待执行 effect 作为持久化、可重放的意图事实；不得执行 effect，也不得实现 effect result/progress、
-Receipt ownership、completion、recovery 或 Agent Loop。它尚未创建，必须先冻结 Issue 边界再实现。
+下一实现 Issue 只能是 **fenced effect result/progress 与 Receipt ownership**。它尚未创建，必须先冻结
+Issue 边界再实现；不得跳到 completion、recovery 或 Agent Loop。
 
 后续能力按以下顺序逐个 Issue/PR 推进，前一个冻结并合并前不实现依赖它的下游：
 
-1. provider-neutral effect identity/replayability 与 durable intent。
-2. fenced effect result/progress 与 Receipt ownership。
-3. completion/revision。
-4. pause/fail/cancel。
-5. fenced replan。
-6. atomic Step Recovery inspection。
-7. Runtime Step Recovery composition。
-8. single-turn Step kernel。
-9. bounded Step Agent Loop。
-10. bounded repair/replan。
+1. fenced effect result/progress 与 Receipt ownership。
+2. completion/revision。
+3. pause/fail/cancel。
+4. fenced replan。
+5. atomic Step Recovery inspection。
+6. Runtime Step Recovery composition。
+7. single-turn Step kernel。
+8. bounded Step Agent Loop。
+9. bounded repair/replan。
 
 V2 API、Web UI、用户接受/拒绝和新 ProjectVersion 属于 Wave 4。Recovery 的 Runtime
 composition 属于 Wave 3，其用户入口/展示属于 Wave 4。V1 Project、版本、Provider、UI 的
@@ -98,12 +95,12 @@ composition 属于 Wave 3，其用户入口/展示属于 Wave 4。V1 Project、�
 
 仅凭仓库文档，新主对话应能回答：
 
-- 当前在哪里：Wave 3 进行中；PR #77 已合并、Issue #76 已关闭，Runtime Step activation
-  composition 已完成，Issue #78 负责刷新交接文档。
+- 当前在哪里：Wave 3 进行中；PR #81 已合并、Issue #80 已关闭，provider-neutral effect
+  identity/replayability 与 durable intent 已完成，Issue #82 负责刷新交接文档。
 - 先做什么：重新核对 Git/GitHub；若本次文档 PR 尚未合并，先完成其审查和门禁，不能直接开始
   下游实现。
 - 下一功能是什么：本次文档 PR 合并后，以其 GitHub merge commit 为唯一 `baseCommit` 发布并
-  冻结 provider-neutral effect identity/replayability 与 durable intent Issue。
+  冻结 fenced effect result/progress 与 Receipt ownership Issue。
 - 不能做什么：不能复制 V1、读取 `.env`、跳过 Issue/worktree/Draft PR、让子对话合并，或
   声称 API/UI/Agent Loop 已完成。
 - 如何继续：严格使用 `DEVELOPMENT_PROCESS.md` 的汇报、轮询、顺序审查和合并门禁。

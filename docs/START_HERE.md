@@ -34,14 +34,15 @@ V2 不继续修补旧 Runtime。它重新实现 Agent 核心，同时选择性�
 已完成并合并的 Wave 3 基础切片包括二元 Router、TaskFrame/Plan/Checkpoint 冻结、原子
 Persistence bootstrap、execution start/recovery、Workspace 物化与校验、Plan execution
 context 及其 Runtime composition、committed-H0 Step activation candidate materialization，以及 Runtime
-Step activation composition（PR #77，Issue #76）。
+Step activation composition（PR #77，Issue #76），以及 provider-neutral effect identity/replayability
+与 durable intent（PR #81，Issue #80）。PR #81 的定向 12 tests、`agent-contracts` 85 tests 和
+`agent-persistence` 191 tests 均为 0 failures、0 errors，两个 fixed-head CI check 均成功。
 当前安全停止点、精确提交、Issue/PR 状态、测试证据和下一切片见
 [当前开发状态](ACTIVE_DEVELOPMENT.md)。
 
 仍未完成的关键产品能力：
 
-- provider-neutral effect identity/replayability、durable intent、effect result/progress、Receipt
-  ownership、completion/replan/recovery 主链。
+- effect result/progress、Receipt ownership、completion/replan/recovery 主链。
 - 单轮 Step kernel、bounded Step Agent Loop 和 bounded repair/replan。
 - 真实模型或执行后端、耐久数据库适配器和生产级隔离。
 - 产品 API、Web UI、用户接受/拒绝与新 ProjectVersion 闭环。
@@ -57,11 +58,10 @@ Step activation composition（PR #77，Issue #76）。
    `main`/`origin/main`、已合并 PR、已关闭 Issue 和是否已有开放的后续实现 Issue；外部状态
    可能在文档写入后变化，不得猜测。
 2. 本次交接刷新 PR 合并后，运行 `git fetch origin`，记录该 PR 的 GitHub merge commit，并确认
-   本地 `main` 与 `origin/main` 都指向该提交。`d7e646f08cf8bb37985c2ff1fbd0ba7564416dff` 仅是本次
+   本地 `main` 与 `origin/main` 都指向该提交。`1ec4369c4d12302774f85291f3de9083110a7970` 仅是本次
    文档刷新 Issue 的 base；该文档 PR 的新 merge commit 才是下一实现 Issue 的唯一 `baseCommit`。
-3. 以该 `baseCommit` 先发布并冻结 provider-neutral effect identity/replayability 与 durable intent
-   Issue。该 Issue 不得执行 effect，也不得实现 effect result/progress、Receipt ownership、completion、
-   recovery 或 Agent Loop。
+3. 以该 `baseCommit` 先发布并冻结 fenced effect result/progress 与 Receipt ownership Issue。该
+   Issue 不得跳到 completion、recovery 或 Agent Loop。
 4. 每个功能继续使用独立 Issue、worktree、`codex/` 分支和 Draft PR；不得越过
    `ACTIVE_DEVELOPMENT.md` 中的依赖顺序并行实现下游能力。
 
