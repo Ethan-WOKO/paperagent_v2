@@ -150,6 +150,16 @@ class RuntimeModuleBoundaryTest {
                             + ".StepActivationRepository;",
                     "import io.paperagent.v2.persistence"
                             + ".StepActivationRequest;");
+    private static final Set<String> ALLOWED_KERNEL_PERSISTENCE_IMPORTS = Set.of(
+            "import io.paperagent.v2.persistence.EffectIntentRepository;",
+            "import io.paperagent.v2.persistence.EffectIntentRequest;",
+            "import io.paperagent.v2.persistence.LeaseRecord;",
+            "import io.paperagent.v2.persistence.PersistedEffectIntent;",
+            "import io.paperagent.v2.persistence.PersistedStepActivation;",
+            "import io.paperagent.v2.persistence.PersistedStepRecoveryActive;",
+            "import io.paperagent.v2.persistence.PersistenceFailure;",
+            "import io.paperagent.v2.persistence.PersistenceResult;",
+            "import io.paperagent.v2.persistence.VersionedCheckpoint;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             WORKSPACE_PREFIX,
@@ -362,6 +372,14 @@ class RuntimeModuleBoundaryTest {
                 "activation",
                 "composition",
                 "Composer.java"));
+        Path kernelSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "kernel",
+                "Kernel.java"));
         Path activationMaterializationSubpackageSource =
                 sourceRoot.resolve(Path.of(
                         "io",
@@ -424,6 +442,9 @@ class RuntimeModuleBoundaryTest {
         assertEquals(
                 ALLOWED_ACTIVATION_COMPOSITION_PERSISTENCE_IMPORTS,
                 allowedPersistenceImports(sourceRoot, activationCompositionSource));
+        assertEquals(
+                ALLOWED_KERNEL_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(sourceRoot, kernelSource));
         assertTrue(
                 allowedPersistenceImports(
                         sourceRoot,
@@ -530,6 +551,10 @@ class RuntimeModuleBoundaryTest {
                 .contains(
                         "return io.paperagent.v2.persistence"
                                 + ".PersistenceResult.applied(value);"));
+        assertFalse(allowedPersistenceImports(sourceRoot, kernelSource)
+                .contains("import io.paperagent.v2.persistence.InMemoryPersistence;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, kernelSource)
+                .contains("import io.paperagent.v2.persistence.*;"));
         assertTrue(
                 allowedPersistenceImports(sourceRoot, otherRuntimeSource)
                         .isEmpty());
@@ -692,6 +717,17 @@ class RuntimeModuleBoundaryTest {
                 "composition"));
     }
 
+    private static boolean isKernelSource(Path sourceRoot, Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "kernel"));
+    }
+
     private static Path activationMaterializationPackage() {
         return Path.of(
                 "io",
@@ -706,6 +742,9 @@ class RuntimeModuleBoundaryTest {
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
+        if (isKernelSource(sourceRoot, sourcePath)) {
+            return ALLOWED_KERNEL_PERSISTENCE_IMPORTS;
+        }
         if (isStepRecoveryCompositionSource(sourceRoot, sourcePath)) {
             return ALLOWED_STEP_RECOVERY_COMPOSITION_PERSISTENCE_IMPORTS;
         }
