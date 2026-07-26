@@ -160,6 +160,9 @@ class RuntimeModuleBoundaryTest {
             "import io.paperagent.v2.persistence.PersistenceFailure;",
             "import io.paperagent.v2.persistence.PersistenceResult;",
             "import io.paperagent.v2.persistence.VersionedCheckpoint;");
+    private static final Set<String> ALLOWED_LOOP_PERSISTENCE_IMPORTS = Set.of(
+            "import io.paperagent.v2.persistence.PersistenceFailure;",
+            "import io.paperagent.v2.persistence.PersistedEffectIntent;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             WORKSPACE_PREFIX,
@@ -380,6 +383,14 @@ class RuntimeModuleBoundaryTest {
                 "execution",
                 "kernel",
                 "Kernel.java"));
+        Path loopSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "loop",
+                "Loop.java"));
         Path activationMaterializationSubpackageSource =
                 sourceRoot.resolve(Path.of(
                         "io",
@@ -445,6 +456,9 @@ class RuntimeModuleBoundaryTest {
         assertEquals(
                 ALLOWED_KERNEL_PERSISTENCE_IMPORTS,
                 allowedPersistenceImports(sourceRoot, kernelSource));
+        assertEquals(
+                ALLOWED_LOOP_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(sourceRoot, loopSource));
         assertTrue(
                 allowedPersistenceImports(
                         sourceRoot,
@@ -554,6 +568,10 @@ class RuntimeModuleBoundaryTest {
         assertFalse(allowedPersistenceImports(sourceRoot, kernelSource)
                 .contains("import io.paperagent.v2.persistence.InMemoryPersistence;"));
         assertFalse(allowedPersistenceImports(sourceRoot, kernelSource)
+                .contains("import io.paperagent.v2.persistence.*;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, loopSource)
+                .contains("import io.paperagent.v2.persistence.InMemoryPersistence;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, loopSource)
                 .contains("import io.paperagent.v2.persistence.*;"));
         assertTrue(
                 allowedPersistenceImports(sourceRoot, otherRuntimeSource)
@@ -728,6 +746,17 @@ class RuntimeModuleBoundaryTest {
                 "kernel"));
     }
 
+    private static boolean isLoopSource(Path sourceRoot, Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "loop"));
+    }
+
     private static Path activationMaterializationPackage() {
         return Path.of(
                 "io",
@@ -742,6 +771,9 @@ class RuntimeModuleBoundaryTest {
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
+        if (isLoopSource(sourceRoot, sourcePath)) {
+            return ALLOWED_LOOP_PERSISTENCE_IMPORTS;
+        }
         if (isKernelSource(sourceRoot, sourcePath)) {
             return ALLOWED_KERNEL_PERSISTENCE_IMPORTS;
         }
