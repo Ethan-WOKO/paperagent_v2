@@ -529,6 +529,44 @@ class CheckpointValidationTest {
                 resumed, ContractFixtures.taskFrame(), plan, paused));
     }
 
+    @Test
+    void supersededByReplanIsTerminalAndCannotBeReopened() {
+        PlanRevision revision = ContractFixtures.revision1();
+        Plan plan = ContractFixtures.plan(revision);
+        Checkpoint active = checkpointAt(
+                revision,
+                5,
+                T0.plusSeconds(5),
+                PlanExecutionState.ACTIVE,
+                Map.of(STEP_1, StepExecutionState.ACTIVE,
+                        STEP_2, StepExecutionState.NOT_STARTED),
+                List.of());
+        Checkpoint superseded = checkpointAt(
+                revision,
+                6,
+                T0.plusSeconds(6),
+                PlanExecutionState.ACTIVE,
+                Map.of(STEP_1, StepExecutionState.SUPERSEDED_BY_REPLAN,
+                        STEP_2, StepExecutionState.NOT_STARTED),
+                List.of());
+        Checkpoint reopened = checkpointAt(
+                revision,
+                7,
+                T0.plusSeconds(7),
+                PlanExecutionState.ACTIVE,
+                Map.of(STEP_1, StepExecutionState.ACTIVE,
+                        STEP_2, StepExecutionState.NOT_STARTED),
+                List.of());
+
+        assertTrue(StepExecutionState.SUPERSEDED_BY_REPLAN.terminal());
+        assertDoesNotThrow(() -> CheckpointValidators.requireValid(
+                superseded, ContractFixtures.taskFrame(), plan, active));
+        assertContains(CheckpointValidators.validate(
+                        reopened, ContractFixtures.taskFrame(), plan, superseded),
+                ViolationCode.CHECKPOINT_STATE_REGRESSION,
+                "checkpoint.stepStates.step-1");
+    }
+
     private static Checkpoint checkpoint(
             PlanId planId,
             PlanRevision revision,

@@ -52,6 +52,8 @@ final class InMemoryState {
             new LinkedHashMap<>();
     final Map<PlanId, Map<EventId, PlanReplanMarker>> planReplans =
             new LinkedHashMap<>();
+    final Map<PlanId, Map<EventId, ActiveStepReplanMarker>> activeStepReplans =
+            new LinkedHashMap<>();
     final Map<ToolCallId, EffectIntentMarker> effectIntents =
             new LinkedHashMap<>();
     final Map<ToolCallId, NavigableMap<Long, EffectProgressMarker>>
@@ -150,6 +152,18 @@ final class InMemoryState {
             return new ExecutionMutationMarkerIdentity("PLAN_REPLAN", eventId);
         }
 
+        static ExecutionMutationMarkerIdentity activeStepReplanSupersession(
+                EventId eventId) {
+            return new ExecutionMutationMarkerIdentity(
+                    "ACTIVE_STEP_REPLAN_SUPERSESSION", eventId);
+        }
+
+        static ExecutionMutationMarkerIdentity activeStepReplanReplan(
+                EventId eventId) {
+            return new ExecutionMutationMarkerIdentity(
+                    "ACTIVE_STEP_REPLAN_REPLAN", eventId);
+        }
+
         @Override
         public String toString() {
             return "ExecutionMutationMarkerIdentity["
@@ -242,6 +256,20 @@ final class InMemoryState {
         public String toString() {
             return "PlanReplanMarker[request=<provided>, result=<provided>, "
                     + "provenanceLink=<provided>]";
+        }
+    }
+
+    record ActiveStepReplanMarker(
+            ActiveStepReplanRequest request,
+            PersistedActiveStepReplan result,
+            ExecutionMutationLink supersessionProvenanceLink,
+            ExecutionMutationLink replanProvenanceLink) {
+
+        @Override
+        public String toString() {
+            return "ActiveStepReplanMarker[request=<provided>, result=<provided>, "
+                    + "supersessionProvenanceLink=<provided>, "
+                    + "replanProvenanceLink=<provided>]";
         }
     }
 
