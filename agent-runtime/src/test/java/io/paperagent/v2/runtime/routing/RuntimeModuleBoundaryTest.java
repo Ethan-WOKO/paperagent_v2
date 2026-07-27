@@ -163,6 +163,17 @@ class RuntimeModuleBoundaryTest {
     private static final Set<String> ALLOWED_LOOP_PERSISTENCE_IMPORTS = Set.of(
             "import io.paperagent.v2.persistence.PersistenceFailure;",
             "import io.paperagent.v2.persistence.PersistedEffectIntent;");
+    private static final Set<String> ALLOWED_REPLAN_COMPOSITION_PERSISTENCE_IMPORTS = Set.of(
+            "import io.paperagent.v2.persistence.ActiveStepReplanRepository;",
+            "import io.paperagent.v2.persistence.ActiveStepReplanRequest;",
+            "import io.paperagent.v2.persistence.LeaseRecord;",
+            "import io.paperagent.v2.persistence.PersistedActiveStepReplan;",
+            "import io.paperagent.v2.persistence.PersistedEffectIntent;",
+            "import io.paperagent.v2.persistence.PersistedStepActivation;",
+            "import io.paperagent.v2.persistence.PersistedStepRecoveryActive;",
+            "import io.paperagent.v2.persistence.PersistenceFailure;",
+            "import io.paperagent.v2.persistence.PersistenceOutcome;",
+            "import io.paperagent.v2.persistence.PersistenceResult;");
     private static final List<String> FORBIDDEN_SOURCE_MARKERS = List.of(
             PERSISTENCE_PREFIX,
             WORKSPACE_PREFIX,
@@ -391,6 +402,15 @@ class RuntimeModuleBoundaryTest {
                 "execution",
                 "loop",
                 "Loop.java"));
+        Path replanCompositionSource = sourceRoot.resolve(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "replan",
+                "composition",
+                "Composer.java"));
         Path activationMaterializationSubpackageSource =
                 sourceRoot.resolve(Path.of(
                         "io",
@@ -459,6 +479,9 @@ class RuntimeModuleBoundaryTest {
         assertEquals(
                 ALLOWED_LOOP_PERSISTENCE_IMPORTS,
                 allowedPersistenceImports(sourceRoot, loopSource));
+        assertEquals(
+                ALLOWED_REPLAN_COMPOSITION_PERSISTENCE_IMPORTS,
+                allowedPersistenceImports(sourceRoot, replanCompositionSource));
         assertTrue(
                 allowedPersistenceImports(
                         sourceRoot,
@@ -573,6 +596,10 @@ class RuntimeModuleBoundaryTest {
                 .contains("import io.paperagent.v2.persistence.InMemoryPersistence;"));
         assertFalse(allowedPersistenceImports(sourceRoot, loopSource)
                 .contains("import io.paperagent.v2.persistence.*;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, replanCompositionSource)
+                .contains("import io.paperagent.v2.persistence.InMemoryPersistence;"));
+        assertFalse(allowedPersistenceImports(sourceRoot, replanCompositionSource)
+                .contains("import io.paperagent.v2.persistence.PlanReplanRepository;"));
         assertTrue(
                 allowedPersistenceImports(sourceRoot, otherRuntimeSource)
                         .isEmpty());
@@ -757,6 +784,20 @@ class RuntimeModuleBoundaryTest {
                 "loop"));
     }
 
+    private static boolean isReplanCompositionSource(
+            Path sourceRoot,
+            Path sourcePath) {
+        Path relative = sourceRoot.relativize(sourcePath);
+        return relative.startsWith(Path.of(
+                "io",
+                "paperagent",
+                "v2",
+                "runtime",
+                "execution",
+                "replan",
+                "composition"));
+    }
+
     private static Path activationMaterializationPackage() {
         return Path.of(
                 "io",
@@ -771,6 +812,9 @@ class RuntimeModuleBoundaryTest {
     private static Set<String> allowedPersistenceImports(
             Path sourceRoot,
             Path sourcePath) {
+        if (isReplanCompositionSource(sourceRoot, sourcePath)) {
+            return ALLOWED_REPLAN_COMPOSITION_PERSISTENCE_IMPORTS;
+        }
         if (isLoopSource(sourceRoot, sourcePath)) {
             return ALLOWED_LOOP_PERSISTENCE_IMPORTS;
         }
