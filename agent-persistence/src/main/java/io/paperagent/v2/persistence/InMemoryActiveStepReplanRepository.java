@@ -337,10 +337,11 @@ final class InMemoryActiveStepReplanRepository
 
     private PersistenceResult<PersistedActiveStepReplan> validateSelectedStepEffects(
             ActiveStepReplanRequest request) {
+        boolean missingFinalResult = false;
         for (Map.Entry<io.paperagent.v2.contracts.ToolCallId,
                 InMemoryState.EffectIntentMarker> entry : state.effectIntents.entrySet()) {
             InMemoryState.EffectIntentMarker marker = entry.getValue();
-            if (marker == null || marker.request() == null
+            if (entry.getKey() == null || marker == null || marker.request() == null
                     || marker.request().intent() == null) {
                 return partialState();
             }
@@ -352,21 +353,60 @@ final class InMemoryActiveStepReplanRepository
             if (!InMemoryEffectIntentRepository.isIntactMarker(entry.getKey(), marker)) {
                 return partialState();
             }
-            return notEligible();
-        }
-        for (io.paperagent.v2.contracts.ToolCallId toolCallId :
-                state.effectProgresses.keySet()) {
-            if (!state.effectIntents.containsKey(toolCallId)) {
+            InMemoryState.EffectResultMarker result =
+                    state.effectResults.get(entry.getKey());
+            if (result == null) {
+                if (state.effectResults.containsKey(entry.getKey())) {
+                    return partialState();
+                }
+                missingFinalResult = true;
+                continue;
+            }
+            if (!isIntactFinalResultMarker(entry.getKey(), result)) {
                 return partialState();
             }
         }
-        for (io.paperagent.v2.contracts.ToolCallId toolCallId :
-                state.effectResults.keySet()) {
-            if (!state.effectIntents.containsKey(toolCallId)) {
+        for (Map.Entry<io.paperagent.v2.contracts.ToolCallId,
+                NavigableMap<Long, InMemoryState.EffectProgressMarker>> entry
+                : state.effectProgresses.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null
+                    || !state.effectIntents.containsKey(entry.getKey())) {
                 return partialState();
             }
         }
-        return null;
+        for (Map.Entry<io.paperagent.v2.contracts.ToolCallId,
+                InMemoryState.EffectResultMarker> entry : state.effectResults.entrySet()) {
+            if (entry.getKey() == null
+                    || !state.effectIntents.containsKey(entry.getKey())
+                    || !isIntactFinalResultMarker(entry.getKey(), entry.getValue())) {
+                return partialState();
+            }
+        }
+        return missingFinalResult ? notEligible() : null;
+    }
+
+    private boolean isIntactFinalResultMarker(
+            io.paperagent.v2.contracts.ToolCallId toolCallId,
+            InMemoryState.EffectResultMarker marker) {
+        if (!InMemoryEffectOutcomeRepository.isIntactResultMarker(
+                state, toolCallId, marker)) {
+            return false;
+        }
+        int receiptsForIntent = 0;
+        for (Map.Entry<io.paperagent.v2.contracts.ReceiptId,
+                io.paperagent.v2.contracts.ExecutionReceipt> entry : state.receipts.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null
+                    || !entry.getKey().equals(entry.getValue().id())) {
+                return false;
+            }
+            if (toolCallId.equals(entry.getValue().toolCallId())) {
+                receiptsForIntent++;
+                if (!entry.getValue().equals(marker.request().receipt())) {
+                    return false;
+                }
+            }
+        }
+        return receiptsForIntent == 1;
     }
 
     private PersistenceResult<PersistedActiveStepReplan> validateEvents(
