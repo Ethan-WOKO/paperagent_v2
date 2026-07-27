@@ -2,23 +2,24 @@ package io.paperagent.v2.persistence;
 
 import io.paperagent.v2.contracts.Checkpoint;
 import io.paperagent.v2.contracts.EffectIntent;
-import io.paperagent.v2.contracts.EffectProgress;
-import io.paperagent.v2.contracts.EffectProgressId;
 import io.paperagent.v2.contracts.EventId;
+import io.paperagent.v2.contracts.ExecutionReceipt;
 import io.paperagent.v2.contracts.ObjectValue;
+import io.paperagent.v2.contracts.OutputCapture;
 import io.paperagent.v2.contracts.Plan;
 import io.paperagent.v2.contracts.PlanExecutionState;
 import io.paperagent.v2.contracts.PlanRevision;
 import io.paperagent.v2.contracts.PlanRevisionId;
 import io.paperagent.v2.contracts.PlanStep;
 import io.paperagent.v2.contracts.PlanStepId;
+import io.paperagent.v2.contracts.ReceiptId;
+import io.paperagent.v2.contracts.ReceiptStatus;
 import io.paperagent.v2.contracts.StepExecutionState;
 import io.paperagent.v2.contracts.TextValue;
 import io.paperagent.v2.contracts.ToolCallId;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,7 +27,6 @@ import java.util.Optional;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ActiveStepReplanRepositoryTest {
@@ -101,38 +101,45 @@ class ActiveStepReplanRepositoryTest {
     }
 
     @Test
-    void selectedStepEffectIntentProgressAndResultRejectWithoutAbandoningThem() {
+    void selectedStepIntentsWithFinalReceiptsAllowApplyAndExactReplay() {
         ActiveStepReplanTestSupport.Harness harness =
                 ActiveStepReplanTestSupport.active("effect");
-        EffectIntent intent = new EffectIntent(
-                new ToolCallId("effect-active-step"), harness.plan().id(),
-                PersistenceFixtures.STEP_1, "workspace.edit",
-                new ObjectValue(Map.of("input", new TextValue("bounded"))));
-        ActiveStepReplanTestSupport.requireApplied(harness.effectIntents().persist(
-                new EffectIntentRequest(intent, ActiveStepReplanTestSupport.TOKEN, 1,
-                        harness.activationEventId())));
-        ActiveStepReplanTestSupport.requireApplied(harness.effectOutcomes().appendProgress(
-                new EffectProgressRequest(new EffectProgress(
-                        new EffectProgressId("effect-active-step-progress"),
-                        intent.toolCallId(), 1, PersistenceFixtures.T0.plusSeconds(3),
-                        new ObjectValue(Map.of("progress", new TextValue("started")))),
-                        ActiveStepReplanTestSupport.TOKEN, 1)));
-        ActiveStepReplanTestSupport.requireApplied(harness.effectOutcomes().recordResult(
-                new EffectResultRequest(PersistenceFixtures.receipt(
-                        "effect-active-step-receipt", intent.toolCallId().value()),
-                        ActiveStepReplanTestSupport.TOKEN, 1)));
+        for (ReceiptStatus status : ReceiptStatus.values()) {
+            EffectIntent intent = ActiveStepReplanTestSupport.persistSelectedIntent(
+                    harness, "effect-" + status.name().toLowerCase());
+            ActiveStepReplanTestSupport.recordFinalReceipt(
+                    harness, intent, "effect-" + status.name().toLowerCase(), status);
+        }
+        ActiveStepReplanTestSupport.Snapshot before =
+                ActiveStepReplanTestSupport.snapshot(harness.state());
+        ActiveStepReplanRequest request = ActiveStepReplanTestSupport.request(harness, "effect");
+
+        PersistedActiveStepReplan applied = ActiveStepReplanTestSupport.requireApplied(
+                harness.activeReplans().supersedeAndReplan(request));
+
+        ActiveStepReplanTestSupport.assertOnlyCompositeWrites(before, harness.state());
+        assertEquals(ReceiptStatus.values().length, harness.state().effectIntents.size());
+        assertEquals(ReceiptStatus.values().length, harness.state().effectResults.size());
+        assertEquals(ReceiptStatus.values().length, harness.state().receipts.size());
+        assertEquals(applied, ActiveStepReplanTestSupport.requireReplayed(
+                harness.activeReplans().supersedeAndReplan(request)));
+    }
+
+    @Test
+    void selectedStepIntentWithoutFinalReceiptRejectsWithoutBusinessWrites() {
+        ActiveStepReplanTestSupport.Harness harness =
+                ActiveStepReplanTestSupport.active("missing-final");
+        ActiveStepReplanTestSupport.persistSelectedIntent(harness, "missing-final");
         ActiveStepReplanTestSupport.Snapshot before =
                 ActiveStepReplanTestSupport.snapshot(harness.state());
 
         ActiveStepReplanTestSupport.assertFailure(
                 harness.activeReplans().supersedeAndReplan(
-                        ActiveStepReplanTestSupport.request(harness, "effect")),
+                        ActiveStepReplanTestSupport.request(harness, "missing-final")),
                 PersistenceErrorCode.ACTIVE_STEP_REPLAN_NOT_ELIGIBLE,
                 "activeStepReplan.source");
+
         assertEquals(before, ActiveStepReplanTestSupport.snapshot(harness.state()));
-        assertEquals(1, harness.state().effectIntents.size());
-        assertEquals(1, harness.state().effectProgresses.size());
-        assertEquals(1, harness.state().effectResults.size());
     }
 
     @Test
@@ -283,7 +290,54 @@ final class ActiveStepReplanTestSupport {
                 new LinkedHashMap<>(state.activeStepReplans),
                 new LinkedHashMap<>(state.executionMutationHeads),
                 new LinkedHashMap<>(state.executionMutationLinks),
-                new LinkedHashMap<>(state.effectIntents));
+                new LinkedHashMap<>(state.effectIntents),
+                new LinkedHashMap<>(state.effectProgresses),
+                new LinkedHashMap<>(state.effectResults),
+                new LinkedHashMap<>(state.receipts));
+    }
+
+    static EffectIntent persistSelectedIntent(Harness harness, String suffix) {
+        EffectIntent intent = new EffectIntent(
+                new ToolCallId("active-replan-effect-" + suffix), harness.plan().id(),
+                PersistenceFixtures.STEP_1, "workspace.edit",
+                new ObjectValue(Map.of("input", new TextValue("bounded-" + suffix))));
+        requireApplied(harness.effectIntents().persist(new EffectIntentRequest(
+                intent, TOKEN, 1, harness.activationEventId())));
+        return intent;
+    }
+
+    static ExecutionReceipt recordFinalReceipt(
+            Harness harness,
+            EffectIntent intent,
+            String suffix,
+            ReceiptStatus status) {
+        ExecutionReceipt receipt = finalReceipt(
+                "active-replan-receipt-" + suffix, intent.toolCallId(), status);
+        requireApplied(harness.effectOutcomes().recordResult(new EffectResultRequest(
+                receipt, TOKEN, 1)));
+        return receipt;
+    }
+
+    static ExecutionReceipt finalReceipt(
+            String receiptId,
+            ToolCallId toolCallId,
+            ReceiptStatus status) {
+        Optional<Integer> exitCode = switch (status) {
+            case SUCCESS -> Optional.of(0);
+            case FAILURE -> Optional.of(1);
+            case CANCELLED, TIMEOUT -> Optional.empty();
+        };
+        Optional<String> resultCode = switch (status) {
+            case SUCCESS -> Optional.empty();
+            case FAILURE -> Optional.of("effect-failed");
+            case CANCELLED -> Optional.of("effect-cancelled");
+            case TIMEOUT -> Optional.of("effect-timeout");
+        };
+        return new ExecutionReceipt(
+                new ReceiptId(receiptId), toolCallId, status,
+                PersistenceFixtures.T0, PersistenceFixtures.T0.plusSeconds(1),
+                exitCode, resultCode, OutputCapture.inline("final", false),
+                OutputCapture.empty(), List.of(), Optional.empty(), List.of());
     }
 
     static void assertOnlyCompositeWrites(Snapshot before, InMemoryState state) {
@@ -292,6 +346,9 @@ final class ActiveStepReplanTestSupport {
         assertEquals(before.eventsById().size() + 2, state.eventsById.size());
         assertEquals(before.activeReplans().size() + 1, state.activeStepReplans.size());
         assertEquals(before.effectIntents(), state.effectIntents);
+        assertEquals(before.effectProgresses(), state.effectProgresses);
+        assertEquals(before.effectResults(), state.effectResults);
+        assertEquals(before.receipts(), state.receipts);
     }
 
     static void assertFailure(
@@ -334,6 +391,9 @@ final class ActiveStepReplanTestSupport {
             Map<?, ?> activeReplans,
             Map<?, ?> heads,
             Map<?, ?> links,
-            Map<?, ?> effectIntents) {
+            Map<?, ?> effectIntents,
+            Map<?, ?> effectProgresses,
+            Map<?, ?> effectResults,
+            Map<?, ?> receipts) {
     }
 }

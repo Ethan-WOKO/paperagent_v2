@@ -1,9 +1,13 @@
 package io.paperagent.v2.persistence;
 
 import io.paperagent.v2.contracts.Checkpoint;
+import io.paperagent.v2.contracts.EffectIntent;
 import io.paperagent.v2.contracts.EventEnvelope;
+import io.paperagent.v2.contracts.ExecutionReceipt;
 import io.paperagent.v2.contracts.PlanId;
+import io.paperagent.v2.contracts.ReceiptStatus;
 import io.paperagent.v2.contracts.TaskFrameId;
+import io.paperagent.v2.contracts.ToolCallId;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -173,5 +177,82 @@ class ActiveStepReplanRepositoryBoundaryTest {
         ActiveStepReplanTestSupport.assertFailure(
                 harness.activeReplans().supersedeAndReplan(malformed),
                 PersistenceErrorCode.INVALID_ARGUMENT, "request.supersessionEvent.planId");
+    }
+
+    @Test
+    void corruptDetachedDuplicateDanglingAndCrossIntentFinalProvenanceFailClosed() {
+        ActiveStepReplanTestSupport.Harness corrupt =
+                ActiveStepReplanTestSupport.active("corrupt-final");
+        EffectIntent corruptIntent = ActiveStepReplanTestSupport.persistSelectedIntent(
+                corrupt, "corrupt-final");
+        ActiveStepReplanTestSupport.recordFinalReceipt(
+                corrupt, corruptIntent, "corrupt-final", ReceiptStatus.SUCCESS);
+        corrupt.state().effectResults.put(corruptIntent.toolCallId(), null);
+        assertFinalProvenanceFailure(corrupt, "corrupt-final");
+
+        ActiveStepReplanTestSupport.Harness detached =
+                ActiveStepReplanTestSupport.active("detached-final");
+        EffectIntent detachedIntent = ActiveStepReplanTestSupport.persistSelectedIntent(
+                detached, "detached-final");
+        ExecutionReceipt detachedReceipt = ActiveStepReplanTestSupport.recordFinalReceipt(
+                detached, detachedIntent, "detached-final",
+                ReceiptStatus.SUCCESS);
+        detached.state().receipts.remove(detachedReceipt.id());
+        assertFinalProvenanceFailure(detached, "detached-final");
+
+        ActiveStepReplanTestSupport.Harness duplicate =
+                ActiveStepReplanTestSupport.active("duplicate-final");
+        EffectIntent duplicateIntent = ActiveStepReplanTestSupport.persistSelectedIntent(
+                duplicate, "duplicate-final");
+        ActiveStepReplanTestSupport.recordFinalReceipt(
+                duplicate, duplicateIntent, "duplicate-final",
+                ReceiptStatus.SUCCESS);
+        ExecutionReceipt duplicateReceipt = ActiveStepReplanTestSupport.finalReceipt(
+                "active-replan-receipt-duplicate-extra", duplicateIntent.toolCallId(),
+                ReceiptStatus.SUCCESS);
+        duplicate.state().receipts.put(duplicateReceipt.id(), duplicateReceipt);
+        assertFinalProvenanceFailure(duplicate, "duplicate-final");
+
+        ActiveStepReplanTestSupport.Harness dangling =
+                ActiveStepReplanTestSupport.active("dangling-final");
+        EffectIntent danglingIntent = ActiveStepReplanTestSupport.persistSelectedIntent(
+                dangling, "dangling-final");
+        ActiveStepReplanTestSupport.recordFinalReceipt(
+                dangling, danglingIntent, "dangling-final",
+                ReceiptStatus.SUCCESS);
+        dangling.state().effectResults.put(new ToolCallId("dangling-final-result"),
+                dangling.state().effectResults.remove(danglingIntent.toolCallId()));
+        assertFinalProvenanceFailure(dangling, "dangling-final");
+
+        ActiveStepReplanTestSupport.Harness crossIntent =
+                ActiveStepReplanTestSupport.active("cross-intent-final");
+        EffectIntent left = ActiveStepReplanTestSupport.persistSelectedIntent(
+                crossIntent, "cross-intent-left");
+        EffectIntent right = ActiveStepReplanTestSupport.persistSelectedIntent(
+                crossIntent, "cross-intent-right");
+        ActiveStepReplanTestSupport.recordFinalReceipt(
+                crossIntent, left, "cross-intent-left",
+                ReceiptStatus.SUCCESS);
+        ActiveStepReplanTestSupport.recordFinalReceipt(
+                crossIntent, right, "cross-intent-right",
+                ReceiptStatus.SUCCESS);
+        crossIntent.state().effectResults.put(left.toolCallId(),
+                crossIntent.state().effectResults.get(right.toolCallId()));
+        assertFinalProvenanceFailure(crossIntent, "cross-intent-final");
+    }
+
+    private static void assertFinalProvenanceFailure(
+            ActiveStepReplanTestSupport.Harness harness,
+            String suffix) {
+        ActiveStepReplanTestSupport.Snapshot before =
+                ActiveStepReplanTestSupport.snapshot(harness.state());
+
+        ActiveStepReplanTestSupport.assertFailure(
+                harness.activeReplans().supersedeAndReplan(
+                        ActiveStepReplanTestSupport.request(harness, suffix)),
+                PersistenceErrorCode.ACTIVE_STEP_REPLAN_PARTIAL_STATE,
+                "activeStepReplan");
+
+        assertEquals(before, ActiveStepReplanTestSupport.snapshot(harness.state()));
     }
 }
