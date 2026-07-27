@@ -1,7 +1,9 @@
 package io.paperagent.v2.persistence;
 
+import io.paperagent.v2.contracts.Checkpoint;
 import io.paperagent.v2.contracts.EventEnvelope;
 import io.paperagent.v2.contracts.PlanId;
+import io.paperagent.v2.contracts.TaskFrameId;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -50,6 +52,32 @@ class ActiveStepReplanRepositoryBoundaryTest {
                 new VersionedCheckpoint(3, request.supersededCheckpoint()),
                 request.replanEvent(), request.replannedRevision(),
                 new VersionedCheckpoint(4, request.replannedCheckpoint())));
+
+        TaskFrameId foreignTaskFrame = new TaskFrameId("foreign-task-frame");
+        Checkpoint crossTaskSuperseded = new Checkpoint(
+                foreignTaskFrame, request.supersededCheckpoint().planId(),
+                request.supersededCheckpoint().revisionId(),
+                request.supersededCheckpoint().revisionNumber(),
+                request.supersededCheckpoint().lastEventSequence(),
+                request.supersededCheckpoint().planState(),
+                request.supersededCheckpoint().stepStates(),
+                request.supersededCheckpoint().receiptReferences(),
+                request.supersededCheckpoint().createdAt());
+        Checkpoint crossTaskReplanned = new Checkpoint(
+                foreignTaskFrame, request.replannedCheckpoint().planId(),
+                request.replannedCheckpoint().revisionId(),
+                request.replannedCheckpoint().revisionNumber(),
+                request.replannedCheckpoint().lastEventSequence(),
+                request.replannedCheckpoint().planState(),
+                request.replannedCheckpoint().stepStates(),
+                request.replannedCheckpoint().receiptReferences(),
+                request.replannedCheckpoint().createdAt());
+        assertThrows(IllegalArgumentException.class, () -> new PersistedActiveStepReplan(
+                request.planId(), request.activeStepId(), "owner", 1,
+                request.supersessionEvent(),
+                new VersionedCheckpoint(4, crossTaskSuperseded),
+                request.replanEvent(), request.replannedRevision(),
+                new VersionedCheckpoint(5, crossTaskReplanned)));
     }
 
     @Test

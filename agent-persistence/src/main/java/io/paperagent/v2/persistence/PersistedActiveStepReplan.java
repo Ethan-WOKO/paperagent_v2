@@ -64,6 +64,9 @@ public record PersistedActiveStepReplan(
                 || !planId.equals(superseded.planId())
                 || !planId.equals(replanned.planId())
                 || !superseded.taskFrameId().equals(replanned.taskFrameId())
+                || !supersessionEvent.taskFrameId().equals(superseded.taskFrameId())
+                || !replanEvent.taskFrameId().equals(replanned.taskFrameId())
+                || !replannedRevision.taskFrameId().equals(replanned.taskFrameId())
                 || superseded.planState() != PlanExecutionState.ACTIVE
                 || superseded.stepStates().get(supersededStepId)
                 != StepExecutionState.SUPERSEDED_BY_REPLAN
