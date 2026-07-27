@@ -55,6 +55,8 @@ final class InMemoryExecutionMutationAuthority {
                 state.stepCancellations.get(planId);
         Map<EventId, InMemoryState.PlanReplanMarker> replanMarkers =
                 state.planReplans.get(planId);
+        Map<EventId, InMemoryState.ActiveStepReplanMarker>
+                activeStepReplanMarkers = state.activeStepReplans.get(planId);
         NavigableMap<Long, EventEnvelope> stream =
                 state.eventStreams.get(planId);
         if (plan == null
@@ -141,6 +143,24 @@ final class InMemoryExecutionMutationAuthority {
                 InMemoryState.PlanReplanMarker tipMarker = replanMarkers == null
                         ? null
                         : replanMarkers.get(tip.markerIdentity().eventId());
+                if (tipMarker == null) {
+                    return null;
+                }
+                tipCheckpoint = tipMarker.result().replannedCheckpoint();
+            } else if ("ACTIVE_STEP_REPLAN_SUPERSESSION".equals(operationType)) {
+                InMemoryState.ActiveStepReplanMarker tipMarker =
+                        activeStepReplanMarkerForEvent(
+                                activeStepReplanMarkers,
+                                tip.markerIdentity().eventId());
+                if (tipMarker == null) {
+                    return null;
+                }
+                tipCheckpoint = tipMarker.result().supersededCheckpoint();
+            } else if ("ACTIVE_STEP_REPLAN_REPLAN".equals(operationType)) {
+                InMemoryState.ActiveStepReplanMarker tipMarker =
+                        activeStepReplanMarkerForEvent(
+                                activeStepReplanMarkers,
+                                tip.markerIdentity().eventId());
                 if (tipMarker == null) {
                     return null;
                 }
@@ -381,6 +401,28 @@ final class InMemoryExecutionMutationAuthority {
                                 .planReplan(eventId));
     }
 
+    static boolean hasValidActiveStepReplanReplayProvenance(
+            InMemoryState state,
+            PlanId planId,
+            EventId supersessionEventId,
+            InMemoryState.ActiveStepReplanMarker marker) {
+        MutationHistory history = reconstructMutationHistory(state, planId);
+        return state.activeStepReplans.get(planId) != null
+                && state.activeStepReplans.get(planId).get(supersessionEventId)
+                == marker
+                && isSelfConsistentActiveStepReplanMarker(
+                        planId, supersessionEventId, marker)
+                && history != null
+                && history.markerIdentities().contains(
+                        InMemoryState.ExecutionMutationMarkerIdentity
+                                .activeStepReplanSupersession(
+                                        supersessionEventId))
+                && history.markerIdentities().contains(
+                        InMemoryState.ExecutionMutationMarkerIdentity
+                                .activeStepReplanReplan(
+                                        marker.request().replanEvent().id()));
+    }
+
     private static boolean isStoredInterruptionMarker(
             InMemoryState state,
             PlanId planId,
@@ -432,6 +474,8 @@ final class InMemoryExecutionMutationAuthority {
                 state.stepCancellations.get(planId);
         Map<EventId, InMemoryState.PlanReplanMarker> replanMarkers =
                 state.planReplans.get(planId);
+        Map<EventId, InMemoryState.ActiveStepReplanMarker>
+                activeStepReplanMarkers = state.activeStepReplans.get(planId);
         NavigableMap<Long, EventEnvelope> stream =
                 state.eventStreams.get(planId);
         if (bootstrap == null
@@ -459,12 +503,16 @@ final class InMemoryExecutionMutationAuthority {
         }
 
         int replanMarkerCount = replanMarkers == null ? 0 : replanMarkers.size();
+        int activeStepReplanMarkerCount = activeStepReplanMarkers == null
+                ? 0
+                : activeStepReplanMarkers.size();
         int markerCount = activationMarkers.size()
                 + completionMarkers.size()
                 + pauseMarkers.size()
                 + failureMarkers.size()
                 + cancellationMarkers.size()
-                + replanMarkerCount;
+                + replanMarkerCount
+                + activeStepReplanMarkerCount * 2;
         if (links.size() != markerCount) {
             return null;
         }
@@ -475,6 +523,22 @@ final class InMemoryExecutionMutationAuthority {
         markerIds.addAll(cancellationMarkers.keySet());
         if (replanMarkers != null) {
             markerIds.addAll(replanMarkers.keySet());
+        }
+        if (activeStepReplanMarkers != null) {
+            for (Map.Entry<EventId, InMemoryState.ActiveStepReplanMarker> entry
+                    : activeStepReplanMarkers.entrySet()) {
+                InMemoryState.ActiveStepReplanMarker marker = entry.getValue();
+                if (entry.getKey() == null
+                        || marker == null
+                        || marker.request() == null
+                        || !entry.getKey().equals(
+                                marker.request().supersessionEvent().id())
+                        || !markerIds.add(entry.getKey())
+                        || !markerIds.add(
+                                marker.request().replanEvent().id())) {
+                    return null;
+                }
+            }
         }
         if (markerIds.size() != markerCount) {
             return null;
@@ -510,7 +574,8 @@ final class InMemoryExecutionMutationAuthority {
                     pauseMarkers,
                     failureMarkers,
                     cancellationMarkers,
-                    replanMarkers);
+                    replanMarkers,
+                    activeStepReplanMarkers);
             if (transition == null
                     || !isValidHistoricalEvent(
                             transition.event(), previousEvent, stream)) {
@@ -550,7 +615,9 @@ final class InMemoryExecutionMutationAuthority {
             Map<EventId, InMemoryState.StepPauseMarker> pauseMarkers,
             Map<EventId, InMemoryState.StepFailMarker> failureMarkers,
             Map<EventId, InMemoryState.StepCancelMarker> cancellationMarkers,
-            Map<EventId, InMemoryState.PlanReplanMarker> replanMarkers) {
+            Map<EventId, InMemoryState.PlanReplanMarker> replanMarkers,
+            Map<EventId, InMemoryState.ActiveStepReplanMarker>
+                    activeStepReplanMarkers) {
         String operationType = link.markerIdentity().operationType();
         EventId eventId = link.markerIdentity().eventId();
         if ("STEP_ACTIVATION".equals(operationType)) {
@@ -624,6 +691,43 @@ final class InMemoryExecutionMutationAuthority {
                             planId, replannedPlan, marker, link)
                     || !isNarrowPlanReplanTransition(
                             taskFrame, plan, replannedPlan, previous, marker)) {
+                return null;
+            }
+            return new HistoricalTransition(
+                    replannedPlan,
+                    marker.result().replannedCheckpoint(),
+                    marker.result().replanEvent());
+        }
+        if ("ACTIVE_STEP_REPLAN_SUPERSESSION".equals(operationType)) {
+            InMemoryState.ActiveStepReplanMarker marker =
+                    activeStepReplanMarkerForEvent(activeStepReplanMarkers, eventId);
+            if (marker == null
+                    || !isActiveStepReplanMarkerBackedLinks(
+                            planId, plan, marker)
+                    || !isNarrowActiveStepReplanSupersessionTransition(
+                            taskFrame, plan, previous, marker)) {
+                return null;
+            }
+            return new HistoricalTransition(
+                    plan,
+                    marker.result().supersededCheckpoint(),
+                    marker.result().supersessionEvent());
+        }
+        if ("ACTIVE_STEP_REPLAN_REPLAN".equals(operationType)) {
+            InMemoryState.ActiveStepReplanMarker marker =
+                    activeStepReplanMarkerForEvent(activeStepReplanMarkers, eventId);
+            Plan replannedPlan = marker == null
+                    ? null
+                    : appendActiveStepReplanRevision(plan, marker.request());
+            if (replannedPlan == null
+                    || !isActiveStepReplanMarkerBackedLinks(
+                            planId, plan, marker)
+                    || !isNarrowActiveStepReplanReplanTransition(
+                            taskFrame,
+                            plan,
+                            replannedPlan,
+                            previous,
+                            marker)) {
                 return null;
             }
             return new HistoricalTransition(
@@ -725,6 +829,25 @@ final class InMemoryExecutionMutationAuthority {
         }
     }
 
+    private static Plan appendActiveStepReplanRevision(
+            Plan plan,
+            ActiveStepReplanRequest request) {
+        if (request == null
+                || !isExactActiveStepReplanRevision(
+                        plan.latestRevision(),
+                        request.activeStepId(),
+                        request.replannedRevision())) {
+            return null;
+        }
+        List<PlanRevision> revisions = new ArrayList<>(plan.revisions());
+        revisions.add(request.replannedRevision());
+        try {
+            return new Plan(plan.id(), plan.taskFrameId(), revisions);
+        } catch (ContractViolationException invalid) {
+            return null;
+        }
+    }
+
     private static boolean isExactReplanRevision(
             PlanRevision previous,
             PlanRevision replanned) {
@@ -736,6 +859,16 @@ final class InMemoryExecutionMutationAuthority {
                 && !replanned.createdAt().isBefore(previous.createdAt())
                 && replanned.taskFrameId().equals(previous.taskFrameId())
                 && replanned.completedFacts().equals(previous.completedFacts());
+    }
+
+    private static boolean isExactActiveStepReplanRevision(
+            PlanRevision previous,
+            PlanStepId supersededStepId,
+            PlanRevision replanned) {
+        return isExactReplanRevision(previous, replanned)
+                && supersededStepId != null
+                && replanned.steps().stream()
+                        .noneMatch(step -> step.id().equals(supersededStepId));
     }
 
     private static boolean isNarrowCompletionTransition(
@@ -804,6 +937,64 @@ final class InMemoryExecutionMutationAuthority {
                         .isEmpty();
     }
 
+    private static boolean isNarrowActiveStepReplanSupersessionTransition(
+            TaskFrame taskFrame,
+            Plan plan,
+            Checkpoint previous,
+            InMemoryState.ActiveStepReplanMarker marker) {
+        if (marker == null || marker.request() == null || marker.result() == null) {
+            return false;
+        }
+        ActiveStepReplanRequest request = marker.request();
+        Checkpoint target = request.supersededCheckpoint();
+        return isEligibleActiveStepReplanSource(
+                        plan, previous, request.activeStepId())
+                && target.lastEventSequence()
+                        == request.supersessionEvent().sequence()
+                && hasSameCheckpointIdentity(previous, target)
+                && target.planState() == PlanExecutionState.ACTIVE
+                && !target.createdAt().isBefore(previous.createdAt())
+                && target.receiptReferences().equals(previous.receiptReferences())
+                && hasOnlyChangedStep(
+                        previous,
+                        target,
+                        request.activeStepId(),
+                        StepExecutionState.SUPERSEDED_BY_REPLAN)
+                && CheckpointValidators.validate(
+                                target, taskFrame, plan, previous)
+                        .isEmpty();
+    }
+
+    private static boolean isNarrowActiveStepReplanReplanTransition(
+            TaskFrame taskFrame,
+            Plan sourcePlan,
+            Plan replannedPlan,
+            Checkpoint superseded,
+            InMemoryState.ActiveStepReplanMarker marker) {
+        if (marker == null || marker.request() == null || marker.result() == null) {
+            return false;
+        }
+        ActiveStepReplanRequest request = marker.request();
+        PlanRevision revision = request.replannedRevision();
+        Checkpoint target = request.replannedCheckpoint();
+        return isExactActiveStepReplanRevision(
+                        sourcePlan.latestRevision(),
+                        request.activeStepId(),
+                        revision)
+                && target.lastEventSequence() == request.replanEvent().sequence()
+                && target.taskFrameId().equals(superseded.taskFrameId())
+                && target.planId().equals(superseded.planId())
+                && target.revisionId().equals(revision.id())
+                && target.revisionNumber() == revision.number()
+                && !target.createdAt().isBefore(superseded.createdAt())
+                && target.receiptReferences().equals(superseded.receiptReferences())
+                && target.planState() == PlanExecutionState.ACTIVE
+                && hasExpectedReplanStepShape(target, revision)
+                && CheckpointValidators.validate(
+                                target, taskFrame, replannedPlan, superseded)
+                        .isEmpty();
+    }
+
     private static boolean isEligiblePlanReplanSource(
             Plan plan,
             Checkpoint checkpoint) {
@@ -820,6 +1011,37 @@ final class InMemoryExecutionMutationAuthority {
             }
         }
         return checkpoint.stepStates().size() == revision.steps().size();
+    }
+
+    static boolean isEligibleActiveStepReplanSource(
+            Plan plan,
+            Checkpoint checkpoint,
+            PlanStepId activeStepId) {
+        PlanRevision revision = plan.latestRevision();
+        if (checkpoint.planState() != PlanExecutionState.ACTIVE
+                || checkpoint.stepStates().get(activeStepId)
+                != StepExecutionState.ACTIVE
+                || revision.completedFacts().containsKey(activeStepId)
+                || revision.steps().stream()
+                        .noneMatch(step -> step.id().equals(activeStepId))) {
+            return false;
+        }
+        int activeCount = 0;
+        for (PlanStep step : revision.steps()) {
+            StepExecutionState expected = revision.completedFacts().containsKey(step.id())
+                    ? StepExecutionState.SUCCEEDED
+                    : step.id().equals(activeStepId)
+                    ? StepExecutionState.ACTIVE
+                    : StepExecutionState.NOT_STARTED;
+            if (checkpoint.stepStates().get(step.id()) != expected) {
+                return false;
+            }
+            if (expected == StepExecutionState.ACTIVE) {
+                activeCount++;
+            }
+        }
+        return activeCount == 1
+                && checkpoint.stepStates().size() == revision.steps().size();
     }
 
     private static boolean hasExpectedReplanStepShape(
@@ -1252,6 +1474,20 @@ final class InMemoryExecutionMutationAuthority {
                         planId, null, marker, marker.provenanceLink());
     }
 
+    static boolean isSelfConsistentActiveStepReplanMarker(
+            PlanId planId,
+            EventId markerKey,
+            InMemoryState.ActiveStepReplanMarker marker) {
+        return markerKey != null
+                && marker != null
+                && marker.request() != null
+                && marker.result() != null
+                && marker.supersessionProvenanceLink() != null
+                && marker.replanProvenanceLink() != null
+                && markerKey.equals(marker.request().supersessionEvent().id())
+                && isActiveStepReplanMarkerBackedLinks(planId, null, marker);
+    }
+
     private static boolean isSelfConsistentInterruptionMarker(
             PlanId planId,
             EventId markerKey,
@@ -1403,6 +1639,97 @@ final class InMemoryExecutionMutationAuthority {
                 && resultHead.mutationEventId().equals(event.id());
     }
 
+    private static boolean isActiveStepReplanMarkerBackedLinks(
+            PlanId planId,
+            Plan sourcePlan,
+            InMemoryState.ActiveStepReplanMarker marker) {
+        if (marker == null
+                || marker.request() == null
+                || marker.result() == null
+                || marker.supersessionProvenanceLink() == null
+                || marker.replanProvenanceLink() == null
+                || !isCompleteLink(marker.supersessionProvenanceLink())
+                || !isCompleteLink(marker.replanProvenanceLink())) {
+            return false;
+        }
+        ActiveStepReplanRequest request = marker.request();
+        PersistedActiveStepReplan result = marker.result();
+        EventEnvelope supersession = request.supersessionEvent();
+        EventEnvelope replan = request.replanEvent();
+        PlanRevision revision = request.replannedRevision();
+        Checkpoint superseded = request.supersededCheckpoint();
+        Checkpoint replanned = request.replannedCheckpoint();
+        VersionedCheckpoint persistedSuperseded = result.supersededCheckpoint();
+        VersionedCheckpoint persistedReplanned = result.replannedCheckpoint();
+        InMemoryState.ExecutionMutationLink supersessionLink =
+                marker.supersessionProvenanceLink();
+        InMemoryState.ExecutionMutationLink replanLink =
+                marker.replanProvenanceLink();
+        InMemoryState.ExecutionMutationHead previous =
+                supersessionLink.previousHead();
+        InMemoryState.ExecutionMutationHead supersededHead =
+                supersessionLink.resultHead();
+        InMemoryState.ExecutionMutationHead replannedHead =
+                replanLink.resultHead();
+        return request.planId().equals(planId)
+                && result.planId().equals(planId)
+                && request.activeStepId().equals(result.supersededStepId())
+                && request.fencingToken() == result.fencingToken()
+                && supersession.equals(result.supersessionEvent())
+                && replan.equals(result.replanEvent())
+                && revision.equals(result.replannedRevision())
+                && superseded.equals(persistedSuperseded.checkpoint())
+                && replanned.equals(persistedReplanned.checkpoint())
+                && supersessionLink.markerIdentity().equals(
+                        InMemoryState.ExecutionMutationMarkerIdentity
+                                .activeStepReplanSupersession(supersession.id()))
+                && replanLink.markerIdentity().equals(
+                        InMemoryState.ExecutionMutationMarkerIdentity
+                                .activeStepReplanReplan(replan.id()))
+                && request.expectedRevisionId().equals(previous.revisionId())
+                && request.expectedRevisionNumber() == previous.revisionNumber()
+                && request.expectedCheckpointVersion()
+                == previous.checkpointVersion()
+                && request.expectedEventHeadSequence()
+                == previous.eventHeadSequence()
+                && supersession.sequence() > previous.eventHeadSequence()
+                && replan.sequence() > supersession.sequence()
+                && persistedSuperseded.version()
+                == request.expectedCheckpointVersion() + 1
+                && superseded.revisionId().equals(previous.revisionId())
+                && superseded.revisionNumber() == previous.revisionNumber()
+                && superseded.lastEventSequence() == supersession.sequence()
+                && superseded.planState() == PlanExecutionState.ACTIVE
+                && superseded.stepStates().get(request.activeStepId())
+                == StepExecutionState.SUPERSEDED_BY_REPLAN
+                && supersededHead.revisionId().equals(previous.revisionId())
+                && supersededHead.revisionNumber() == previous.revisionNumber()
+                && supersededHead.checkpointVersion()
+                == persistedSuperseded.version()
+                && supersededHead.eventHeadSequence() == supersession.sequence()
+                && supersededHead.mutationEventId().equals(supersession.id())
+                && replanLink.previousHead().equals(supersededHead)
+                && persistedReplanned.version()
+                == request.expectedCheckpointVersion() + 2
+                && revision.number() == previous.revisionNumber() + 1
+                && revision.parentRevisionId().equals(
+                        java.util.Optional.of(previous.revisionId()))
+                && replanned.revisionId().equals(revision.id())
+                && replanned.revisionNumber() == revision.number()
+                && replanned.lastEventSequence() == replan.sequence()
+                && replanned.planState() == PlanExecutionState.ACTIVE
+                && replannedHead.revisionId().equals(revision.id())
+                && replannedHead.revisionNumber() == revision.number()
+                && replannedHead.checkpointVersion()
+                == persistedReplanned.version()
+                && replannedHead.eventHeadSequence() == replan.sequence()
+                && replannedHead.mutationEventId().equals(replan.id())
+                && (sourcePlan == null || isExactActiveStepReplanRevision(
+                        sourcePlan.latestRevision(),
+                        request.activeStepId(),
+                        revision));
+    }
+
     private static boolean isExactCompletionRevision(
             PlanRevision previous,
             StepCompletionRequest request,
@@ -1464,6 +1791,31 @@ final class InMemoryExecutionMutationAuthority {
                                 value == StepExecutionState.SUCCEEDED);
     }
 
+    private static InMemoryState.ActiveStepReplanMarker
+            activeStepReplanMarkerForEvent(
+                    Map<EventId, InMemoryState.ActiveStepReplanMarker> markers,
+                    EventId eventId) {
+        if (markers == null || eventId == null) {
+            return null;
+        }
+        InMemoryState.ActiveStepReplanMarker found = null;
+        for (Map.Entry<EventId, InMemoryState.ActiveStepReplanMarker> entry
+                : markers.entrySet()) {
+            InMemoryState.ActiveStepReplanMarker marker = entry.getValue();
+            if (marker == null || marker.request() == null) {
+                continue;
+            }
+            if (eventId.equals(entry.getKey())
+                    || eventId.equals(marker.request().replanEvent().id())) {
+                if (found != null && found != marker) {
+                    return null;
+                }
+                found = marker;
+            }
+        }
+        return found;
+    }
+
     static boolean hasPlanScopedOccupancy(
             InMemoryState state,
             PlanId planId) {
@@ -1483,6 +1835,7 @@ final class InMemoryExecutionMutationAuthority {
                 || state.stepFailures.containsKey(planId)
                 || state.stepCancellations.containsKey(planId)
                 || state.planReplans.containsKey(planId)
+                || state.activeStepReplans.containsKey(planId)
                 || state.planExecutionContextReservations.containsKey(planId)
                 || state.planExecutionContextConfirmations.containsKey(planId)
                 || InMemoryPlanExecutionContextAuthority

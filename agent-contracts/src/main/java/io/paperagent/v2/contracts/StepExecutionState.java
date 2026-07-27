@@ -6,9 +6,13 @@ public enum StepExecutionState {
     PAUSED,
     SUCCEEDED,
     FAILED,
-    CANCELLED;
+    CANCELLED,
+    SUPERSEDED_BY_REPLAN;
 
     public boolean terminal() {
-        return this == SUCCEEDED || this == FAILED || this == CANCELLED;
+        return this == SUCCEEDED
+                || this == FAILED
+                || this == CANCELLED
+                || this == SUPERSEDED_BY_REPLAN;
     }
 }
